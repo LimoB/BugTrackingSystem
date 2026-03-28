@@ -2,232 +2,150 @@
 session_start();
 include('../../config/config.php');
 
-// Check if the request is an AJAX request
+// ✅ 1. Security & Role Check
+if (!isset($_SESSION['user_id']) || strtolower($_SESSION['role']) !== 'developer') {
+    die("<div class='p-6 text-red-500 font-bold'>Unauthorized Access</div>");
+}
+
+// ✅ 2. AJAX Detail Fetcher (Returns JSON)
 if (isset($_GET['ajax']) && $_GET['ajax'] == 'true' && isset($_GET['ticket_id'])) {
-    // Fetch specific ticket details for AJAX request
     $ticket_id = intval($_GET['ticket_id']);
     
-    // Fetch ticket details
-    $query = "SELECT * FROM Tickets WHERE id = ?";
+    // Fetch ticket + project + creator name
+    $query = "SELECT t.*, p.name AS project_name, u.name AS creator_name 
+              FROM Tickets t 
+              LEFT JOIN Projects p ON t.project_id = p.id 
+              LEFT JOIN Users u ON t.created_by = u.id
+              WHERE t.id = ?";
     $stmt = $connection->prepare($query);
     $stmt->bind_param("i", $ticket_id);
     $stmt->execute();
-    $ticket_result = $stmt->get_result();
+    $ticket = $stmt->get_result()->fetch_assoc();
     
-    if ($ticket_result->num_rows == 0) {
+    if (!$ticket) {
         echo json_encode(['error' => 'Ticket not found']);
         exit();
     }
     
-    $ticket = $ticket_result->fetch_assoc();
-    
-    // Fetch comments for this ticket
-    $comment_query = "
-        SELECT u.name AS user_name, c.comment, c.created_at 
-        FROM Comments c
-        JOIN Users u ON c.user_id = u.id
-        WHERE c.issue_id = ?
-        ORDER BY c.created_at DESC
-    ";
-    $comment_stmt = $connection->prepare($comment_query);
-    $comment_stmt->bind_param("i", $ticket_id);
-    $comment_stmt->execute();
-    $comments_result = $comment_stmt->get_result();
+    // Fetch comments (fixed column name issue_id -> ticket_id to match your DB)
+    $c_query = "SELECT u.name, c.comment, c.created_at FROM Comments c
+                JOIN Users u ON c.user_id = u.id
+                WHERE c.ticket_id = ? ORDER BY c.created_at DESC";
+    $c_stmt = $connection->prepare($c_query);
+    $c_stmt->bind_param("i", $ticket_id);
+    $c_stmt->execute();
+    $comments = $c_stmt->get_result()->fetch_all(MYSQLI_ASSOC);
 
-    $comments = [];
-    while ($comment = $comments_result->fetch_assoc()) {
-        $comments[] = $comment;
-    }
-
-    // Return ticket details and comments as JSON
-    echo json_encode([
-        'ticket' => $ticket,
-        'comments' => $comments
-    ]);
+    echo json_encode(['ticket' => $ticket, 'comments' => $comments]);
     exit();
 }
 ?>
 
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>View Tickets</title>
-    <link rel="stylesheet" href="style.css">
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-    <style>
-    body {
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        background-color: #f4f6f8;
-        margin: 0;
-        padding: 0;
-    }
+<div class="animate-fade-in">
+    <div class="mb-8">
+        <h1 class="text-3xl font-extrabold tracking-tight">Global Backlog</h1>
+        <p class="text-slate-500 dark:text-slate-400">All system issues across all projects.</p>
+    </div>
 
-    .container {
-        max-width: 900px;
-        margin: 40px auto;
-        padding: 0 20px;
-    }
-
-    .tickets-container {
-        background: white;
-        padding: 30px;
-        border-radius: 12px;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-    }
-
-    h2 {
-        margin-top: 0;
-        font-size: 28px;
-        color: #333;
-        margin-bottom: 20px;
-        border-bottom: 2px solid #e0e0e0;
-        padding-bottom: 10px;
-    }
-
-    .ticket-item {
-        background: #fdfdfd;
-        padding: 15px 20px;
-        margin-bottom: 10px;
-        border-radius: 8px;
-        border: 1px solid #ddd;
-        transition: background-color 0.2s, box-shadow 0.2s;
-    }
-
-    .ticket-item:hover {
-        background-color: #f0f8ff;
-        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05);
-    }
-
-    .ticket-item a {
-        font-weight: 500;
-        text-decoration: none;
-        color: #333;
-        font-size: 16px;
-    }
-
-    .ticket-details {
-        display: none;
-        background: #fafafa;
-        padding: 20px;
-        border-left: 4px solid #007bff;
-        border-radius: 0 0 8px 8px;
-        margin-bottom: 20px;
-        font-size: 15px;
-    }
-
-    .ticket-details h3 {
-        margin-top: 0;
-        font-size: 22px;
-        color: #007bff;
-    }
-
-    .ticket-details p {
-        margin: 8px 0;
-    }
-
-    .ticket-details h4 {
-        margin-top: 20px;
-        font-size: 18px;
-        color: #444;
-        border-bottom: 1px solid #ddd;
-        padding-bottom: 5px;
-    }
-
-    .comment {
-        background: #fff;
-        border: 1px solid #ddd;
-        padding: 12px;
-        border-radius: 6px;
-        margin-top: 10px;
-    }
-
-    .comment p {
-        margin: 5px 0;
-    }
-
-    .comment small {
-        color: #666;
-        font-size: 13px;
-    }
-</style>
-
-    <script>
-        // Function to fetch ticket details using AJAX
-        function loadTicketDetails(ticketId, element) {
-            $.ajax({
-                url: 'view-tickets.php?ajax=true&ticket_id=' + ticketId,
-                method: 'GET',
-                dataType: 'json',
-                success: function(response) {
-                    if (response.error) {
-                        alert(response.error);
-                    } else {
-                        var ticket = response.ticket;
-                        var comments = response.comments;
-
-                        // Display ticket details
-                        var ticketDetailsHtml = `
-                            <h3>Ticket #${ticket.id}</h3>
-                            <p><strong>Title:</strong> ${ticket.title}</p>
-                            <p><strong>Description:</strong> ${ticket.description}</p>
-                            <p><strong>Status:</strong> ${ticket.status.charAt(0).toUpperCase() + ticket.status.slice(1)}</p>
-                            <h4>Comments:</h4>
-                        `;
-
-                        // Display comments
-                        comments.forEach(function(comment) {
-                            ticketDetailsHtml += `
-                                <div class="comment">
-                                    <p><strong>${comment.user_name}:</strong> ${comment.comment}</p>
-                                    <p><small>${comment.created_at}</small></p>
-                                </div>
-                            `;
-                        });
-
-                        // Insert the ticket details into the div
-                        $(element).next('.ticket-details').html(ticketDetailsHtml).slideDown();
-                    }
-                }
-            });
-        }
-
-        // Handle click event to toggle ticket details visibility
-        $(document).on('click', '.ticket-item', function() {
-            var ticketId = $(this).data('ticket-id');
-            var detailsDiv = $(this).next('.ticket-details');
-            
-            // Check if details are already shown, then hide it
-            if (detailsDiv.is(':visible')) {
-                detailsDiv.slideUp();
-            } else {
-                loadTicketDetails(ticketId, this);  // Load ticket details if not already loaded
-            }
-        });
-    </script>
-</head>
-<body>
-
-<div class="container">
-    <div class="tickets-container">
-        <h2>All Tickets</h2>
-        <?php
-        $query = "SELECT id, title, status FROM Tickets";
-        $result = mysqli_query($connection, $query);
-        if (!$result) {
-            die("Error fetching tickets: " . mysqli_error($connection));
-        }
-        
-        while ($ticket = mysqli_fetch_assoc($result)) {
-            echo "<div class='ticket-item' data-ticket-id='" . $ticket['id'] . "'>";
-            echo "<a href='javascript:void(0)'>" . $ticket['id'] . ": " . htmlspecialchars($ticket['title']) . " - Status: " . ucfirst($ticket['status']) . "</a>";
-            echo "</div>";
-            echo "<div class='ticket-details'></div>"; // The details will be inserted here
-        }
-        ?>
+    <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-[2rem] overflow-hidden shadow-sm">
+        <table class="w-full text-left border-collapse">
+            <thead>
+                <tr class="bg-slate-50/50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800">
+                    <th class="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Reference</th>
+                    <th class="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Issue Title</th>
+                    <th class="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Status</th>
+                    <th class="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-right">Action</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+                <?php
+                $all_tickets = mysqli_query($connection, "SELECT id, title, status FROM Tickets ORDER BY id DESC");
+                while ($t = mysqli_fetch_assoc($all_tickets)):
+                    $status_color = [
+                        'open' => 'text-blue-600 bg-blue-50',
+                        'in-progress' => 'text-amber-600 bg-amber-50',
+                        'resolved' => 'text-emerald-600 bg-emerald-50',
+                    ][strtolower($t['status'])] ?? 'text-slate-500 bg-slate-50';
+                ?>
+                <tr class="group hover:bg-slate-50/30 dark:hover:bg-slate-800/20 transition-all">
+                    <td class="px-6 py-4 font-mono text-xs text-slate-400">#<?php echo $t['id']; ?></td>
+                    <td class="px-6 py-4">
+                        <span class="font-bold text-slate-700 dark:text-slate-200 group-hover:text-indigo-600 transition-colors cursor-pointer" 
+                              onclick="toggleDetails(<?php echo $t['id']; ?>, this)">
+                            <?php echo htmlspecialchars($t['title']); ?>
+                        </span>
+                    </td>
+                    <td class="px-6 py-4">
+                        <span class="px-2 py-0.5 rounded text-[10px] font-bold uppercase <?php echo $status_color; ?>">
+                            <?php echo $t['status']; ?>
+                        </span>
+                    </td>
+                    <td class="px-6 py-4 text-right">
+                        <button onclick="loadPage('ticket-details&ticket_id=<?php echo $t['id']; ?>')" 
+                                class="p-2 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 text-slate-400 hover:text-indigo-600 rounded-lg transition-all">
+                            <i data-lucide="maximize-2" class="w-4 h-4"></i>
+                        </button>
+                    </td>
+                </tr>
+                <tr id="details-<?php echo $t['id']; ?>" class="hidden bg-slate-50/50 dark:bg-slate-800/40">
+                    <td colspan="4" class="px-10 py-6 border-l-4 border-indigo-500">
+                        <div id="content-<?php echo $t['id']; ?>" class="text-sm space-y-4">
+                            <div class="flex items-center gap-4 text-indigo-400">
+                                <div class="animate-spin rounded-full h-4 w-4 border-2 border-indigo-500 border-t-transparent"></div>
+                                <span class="font-bold text-xs uppercase tracking-widest">Fetching Technical Data...</span>
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+                <?php endwhile; ?>
+            </tbody>
+        </table>
     </div>
 </div>
 
-</body>
-</html>
+<script>
+    lucide.createIcons();
+
+    function toggleDetails(id, el) {
+        const row = $(`#details-${id}`);
+        const content = $(`#content-${id}`);
+
+        if (row.hasClass('hidden')) {
+            row.removeClass('hidden');
+            
+            // AJAX Fetch
+            $.getJSON(`view-tickets.php?ajax=true&ticket_id=${id}`, function(data) {
+                if(data.error) {
+                    content.html(`<p class='text-red-500'>${data.error}</p>`);
+                } else {
+                    let commentsHtml = data.comments.length > 0 
+                        ? data.comments.map(c => `<div class='mb-2 text-xs'><b class='text-indigo-500'>${c.name}:</b> ${c.comment}</div>`).join('')
+                        : `<p class='text-slate-400 italic text-xs'>No discussion yet.</p>`;
+
+                    content.html(`
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div>
+                                <h4 class="text-[10px] font-black uppercase text-slate-400 mb-2 tracking-widest">Description</h4>
+                                <p class="text-slate-600 dark:text-slate-300 leading-relaxed">${data.ticket.description}</p>
+                                <div class="mt-4 flex gap-4 text-[10px] font-bold">
+                                    <span class="text-slate-400 uppercase">Project: <b class="text-slate-600 dark:text-slate-200">${data.ticket.project_name || 'Unassigned'}</b></span>
+                                    <span class="text-slate-400 uppercase">Reporter: <b class="text-slate-600 dark:text-slate-200">${data.ticket.creator_name || 'System'}</b></span>
+                                </div>
+                            </div>
+                            <div class="border-l border-slate-200 dark:border-slate-700 pl-6">
+                                <h4 class="text-[10px] font-black uppercase text-slate-400 mb-2 tracking-widest">Latest Activity</h4>
+                                ${commentsHtml}
+                                <button onclick="loadPage('ticket-details&ticket_id=${id}')" class="mt-4 text-xs font-bold text-indigo-600 hover:underline flex items-center gap-1">
+                                    Join Discussion <i data-lucide="arrow-right" class="w-3 h-3"></i>
+                                </button>
+                            </div>
+                        </div>
+                    `);
+                    lucide.createIcons();
+                }
+            });
+        } else {
+            row.addClass('hidden');
+        }
+    }
+</script>

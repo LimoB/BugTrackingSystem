@@ -1,57 +1,45 @@
 <?php
-// user/create-ticket.php - Form to create a new ticket (by regular user)
-
 session_start();
-
-ini_set('display_errors', 1);
-error_reporting(E_ALL);
-
-
-
-// Check if the user is logged in and has the 'user' role
+// Security Check
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'user') {
     header("Location: ../login/index.php");
     exit();
 }
 
 include('../../config/config.php');
-
+$base_url = "/php-bugtracking-system/";
 $message = '';
+$message_type = '';
 
-// Fetch available projects from the Projects table
-$projectsQuery = "SELECT * FROM Projects";
-$projectsResult = mysqli_query($connection, $projectsQuery);
-
-if (!$projectsResult) {
-    die("Error fetching projects: " . mysqli_error($connection));
-}
+// Fetch projects for the dropdown
+$projectsResult = mysqli_query($connection, "SELECT id, name FROM Projects");
 
 if (isset($_POST['create_ticket'])) {
-    $project_id = mysqli_real_escape_string($connection, $_POST['project_id']);
-    $title = mysqli_real_escape_string($connection, $_POST['title']);
-    $description = mysqli_real_escape_string($connection, $_POST['description']);
-    $status = mysqli_real_escape_string($connection, $_POST['status']);
+    $title = trim($_POST['title']);
+    $description = trim($_POST['description']);
+    $project_id = $_POST['project_id'];
+    $status = 'open'; // Default to open for new user tickets
     $created_by = $_SESSION['user_id'];
 
-    // Validate inputs
     if (empty($title) || empty($description) || empty($project_id)) {
-        $message = "Title, Description, and Project are required.";
+        $message = "Please fill in all required fields.";
+        $message_type = "error";
     } else {
-        // Insert ticket with selected project_id
-        $query = "INSERT INTO Tickets (title, description, assigned_to, status, created_by, project_id)
-                  VALUES ('$title', '$description', NULL, '$status', '$created_by', '$project_id')";
+        // SECURE PREPARED STATEMENT
+        $stmt = $connection->prepare("INSERT INTO Tickets (title, description, status, created_by, project_id) VALUES (?, ?, ?, ?, ?)");
+        $stmt->bind_param("sssii", $title, $description, $status, $created_by, $project_id);
 
-        if (mysqli_query($connection, $query)) {
-            $message = "Ticket created successfully!";
+        if ($stmt->execute()) {
+            $_SESSION['message'] = "Ticket # " . $stmt->insert_id . " created successfully!";
+            $_SESSION['message_type'] = "success";
+            header("Location: index.php");
+            exit();
         } else {
-            $message = "Error: " . mysqli_error($connection);
+            $message = "Database error: " . $connection->error;
+            $message_type = "error";
         }
+        $stmt->close();
     }
-
-    // Set the message and redirect to the dashboard
-    $_SESSION['message'] = $message;
-    header("Location: index.php");  // Redirect to dashboard
-    exit();
 }
 ?>
 
@@ -60,72 +48,99 @@ if (isset($_POST['create_ticket'])) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Create Ticket</title>
-    <link rel="stylesheet" href="style.css">
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <title>Report an Issue | Zappr</title>
+    <link href="<?php echo $base_url; ?>dist/output.css" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@0.344.0/dist/umd/lucide.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <style>
-        .ticket-form-container {
-            margin: 20px;
-            padding: 20px;
-            background-color: #f4f7fc;
-            border-radius: 8px;
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
-        }
-        .ticket-form h2 {
-            margin-bottom: 20px;
-        }
-        .input-field, .submit-btn, select {
-            width: 100%;
-            padding: 10px;
-            margin-bottom: 15px;
-            border-radius: 5px;
-            border: 1px solid #ddd;
-        }
-        .submit-btn {
-            background-color: #007bff; /* Navy blue */
-            color: white;
-            cursor: pointer;
-        }
-        .submit-btn:hover {
-            background-color: #007bff; /* Slightly lighter navy */
-        }
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap');
+        body { font-family: 'Plus Jakarta Sans', sans-serif; }
     </style>
 </head>
-<body>
-<?php include('header.php'); ?>
+<body class="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex min-h-screen">
 
-<div id="content-area">
-    <h1>Create a New Ticket</h1>
+    <?php include('header.php'); ?>
 
-    <div class="ticket-form-container">
-        <form action="create-ticket.php" method="POST" class="ticket-form">
-            <input type="text" name="title" placeholder="Ticket Title" required class="input-field">
+    <main class="flex-grow p-6 lg:p-10 flex flex-col items-center">
+        
+        <div class="w-full max-w-3xl">
+            <a href="index.php" class="inline-flex items-center gap-2 text-sm font-bold text-slate-400 hover:text-blue-600 transition mb-6 group">
+                <i data-lucide="arrow-left" class="w-4 h-4 group-hover:-translate-x-1 transition-transform"></i>
+                Back to Dashboard
+            </a>
 
-            <textarea name="description" placeholder="Ticket Description" required class="input-field"></textarea>
+            <div class="mb-10">
+                <h1 class="text-4xl font-extrabold tracking-tight">Report a New Bug</h1>
+                <p class="text-slate-500 dark:text-slate-400 mt-2 text-lg">Provide as much detail as possible to help our devs zap it faster.</p>
+            </div>
 
-            <select name="status" required class="input-field">
-                <option value="open">Open</option>
-                <option value="in-progress">In Progress</option>
-                <option value="resolved">Resolved</option>
-                <option value="closed">Closed</option>
-                <option value="on_hold">On Hold</option>
-            </select>
+            <div class="bg-white dark:bg-slate-900 rounded-[2.5rem] border border-slate-200 dark:border-slate-800 shadow-xl shadow-slate-200/50 dark:shadow-none p-8 md:p-12">
+                
+                <form action="create-ticket.php" method="POST" class="space-y-8">
+                    
+                    <div>
+                        <label class="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-3 ml-1">Select Project</label>
+                        <div class="relative group">
+                            <div class="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none text-slate-400">
+                                <i data-lucide="layers" class="w-5 h-5"></i>
+                            </div>
+                            <select name="project_id" required 
+                                    class="w-full pl-12 pr-4 py-4 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl focus:outline-none focus:ring-4 focus:ring-blue-50 dark:focus:ring-blue-900/20 focus:border-blue-600 transition-all appearance-none cursor-pointer">
+                                <option value="">Which project is this for?</option>
+                                <?php while ($project = mysqli_fetch_assoc($projectsResult)): ?>
+                                    <option value="<?php echo $project['id']; ?>"><?php echo htmlspecialchars($project['name']); ?></option>
+                                <?php endwhile; ?>
+                            </select>
+                            <div class="absolute inset-y-0 right-0 pr-4 flex items-center pointer-events-none text-slate-400">
+                                <i data-lucide="chevron-down" class="w-4 h-4"></i>
+                            </div>
+                        </div>
+                    </div>
 
-            <select name="project_id" required class="input-field">
-                <option value="">Select Project</option>
-                <?php
-                while ($project = mysqli_fetch_assoc($projectsResult)) {
-                    echo '<option value="' . $project['id'] . '">' . $project['name'] . '</option>';
-                }
-                ?>
-            </select>
+                    <div>
+                        <label class="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-3 ml-1">Issue Title</label>
+                        <input type="text" name="title" placeholder="e.g. Login button unresponsive on mobile" required 
+                               class="w-full px-6 py-4 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl focus:outline-none focus:ring-4 focus:ring-blue-50 dark:focus:ring-blue-900/20 focus:border-blue-600 transition-all font-medium text-lg">
+                    </div>
 
-            <button type="submit" name="create_ticket" class="submit-btn">Create Ticket</button>
-        </form>
-    </div>
-</div>
+                    <div>
+                        <label class="block text-sm font-bold text-slate-700 dark:text-slate-300 mb-3 ml-1">Detailed Description</label>
+                        <textarea name="description" rows="6" placeholder="Steps to reproduce, expected behavior, and actual results..." required 
+                                  class="w-full px-6 py-4 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl focus:outline-none focus:ring-4 focus:ring-blue-50 dark:focus:ring-blue-900/20 focus:border-blue-600 transition-all font-medium resize-none"></textarea>
+                    </div>
 
-<?php include('../../includes/footer.php'); ?>
+                    <div class="pt-4">
+                        <button type="submit" name="create_ticket" 
+                                class="w-full bg-blue-600 text-white py-5 rounded-[1.5rem] font-bold text-xl hover:bg-blue-700 hover:scale-[1.01] active:scale-[0.99] transition-all shadow-xl shadow-blue-200 dark:shadow-none flex items-center justify-center gap-3">
+                            Submit Bug Report
+                            <i data-lucide="send" class="w-6 h-6"></i>
+                        </button>
+                    </div>
+                </form>
+            </div>
 
+            <div class="mt-8 p-6 bg-amber-50 dark:bg-amber-900/10 rounded-2xl border border-amber-100 dark:border-amber-900/30 flex gap-4">
+                <i data-lucide="info" class="w-6 h-6 text-amber-600 shrink-0"></i>
+                <p class="text-sm text-amber-800 dark:text-amber-200 leading-relaxed">
+                    <strong>Note:</strong> Your ticket will be set to <span class="font-bold">"Open"</span> by default. An admin or developer will review it shortly and update the status accordingly.
+                </p>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        lucide.createIcons();
+
+        // 🍞 SweetAlert if error occurs
+        <?php if ($message_type === 'error'): ?>
+        Swal.fire({
+            icon: 'error',
+            title: 'Oops...',
+            text: '<?php echo $message; ?>',
+            background: document.documentElement.classList.contains('dark') ? '#1e293b' : '#fff',
+            color: document.documentElement.classList.contains('dark') ? '#fff' : '#1e293b'
+        });
+        <?php endif; ?>
+    </script>
 </body>
 </html>

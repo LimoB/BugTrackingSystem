@@ -1,382 +1,234 @@
 <?php
 session_start();
-ini_set('display_errors', 1);
-error_reporting(E_ALL);
-
+// Security & Errors
 if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'user') {
     header("Location: ../login/index.php");
     exit();
 }
-
 include('../../config/config.php');
 
+$base_url = "/php-bugtracking-system/";
 $user_id = $_SESSION['user_id'];
 
-// Get the filter and search parameters
+// --- Logic: Search, Filter, Sort ---
 $status_filter = isset($_GET['status']) ? mysqli_real_escape_string($connection, $_GET['status']) : '';
 $search_query = isset($_GET['search']) ? mysqli_real_escape_string($connection, $_GET['search']) : '';
-$sort_column = isset($_GET['sort']) ? $_GET['sort'] : 'id'; // Default to sorting by ID
+$sort_column = isset($_GET['sort']) ? $_GET['sort'] : 'id';
 
-// Add validation for sort columns to prevent SQL injection
-$valid_sort_columns = ['id', 'title', 'status', 'created_by', 'assigned_by', 'assigned_to'];
-if (!in_array($sort_column, $valid_sort_columns)) {
-    $sort_column = 'id'; // Default to 'id' if invalid column is selected
+$valid_sort_columns = ['id', 'title', 'status', 'created_at'];
+if (!in_array($sort_column, $valid_sort_columns)) { $sort_column = 'id'; }
+
+// API Logic: Fetch Comments via AJAX
+if (isset($_GET['fetch_comments'])) {
+    $tid = mysqli_real_escape_string($connection, $_GET['fetch_comments']);
+    $c_query = "SELECT C.comment, U.name, C.created_at FROM Comments C 
+                LEFT JOIN Users U ON C.user_id = U.id WHERE C.ticket_id = '$tid' ORDER BY C.created_at DESC";
+    $c_res = mysqli_query($connection, $c_query);
+    $comments = [];
+    while($row = mysqli_fetch_assoc($c_res)) { $comments[] = $row; }
+    header('Content-Type: application/json');
+    echo json_encode($comments);
+    exit();
 }
 
-// Start building the SQL query
-$query = "SELECT T.id, T.title, T.description, T.status, T.created_by, T.assigned_by, T.assigned_to, T.project_id,
-                 U.name AS created_by_name, A.name AS assigned_by_name, B.name AS assigned_to_name, P.name AS project_name
+// Main Ticket Query
+$query = "SELECT T.*, U.name AS creator, B.name AS developer, P.name AS project_name
           FROM Tickets T
           LEFT JOIN Users U ON T.created_by = U.id
-          LEFT JOIN Users A ON T.assigned_by = A.id
           LEFT JOIN Users B ON T.assigned_to = B.id
           LEFT JOIN Projects P ON T.project_id = P.id
-          WHERE T.assigned_to = '$user_id' OR T.created_by = '$user_id'";
+          WHERE T.created_by = '$user_id' OR T.assigned_to = '$user_id'";
 
-// Apply the status filter if it's set
-if ($status_filter) {
-    $query .= " AND T.status = '$status_filter'";
-}
+if ($status_filter) { $query .= " AND T.status = '$status_filter'"; }
+if ($search_query) { $query .= " AND (T.title LIKE '%$search_query%' OR T.description LIKE '%$search_query%')"; }
 
-// Apply the search query if it's set
-if ($search_query) {
-    $query .= " AND (T.title LIKE '%$search_query%' OR T.description LIKE '%$search_query%')";
-}
-
-// Add sorting by ticket column (ID, title, status, created_by, etc.)
 $query .= " ORDER BY T.$sort_column DESC";
-
-// Execute the query
 $result = mysqli_query($connection, $query);
-
-if (!$result) {
-    die("Query error: " . mysqli_error($connection));
-}
-
-// Handle comment insertion
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['comment'])) {
-    $ticket_id = $_POST['ticket_id'];
-    $comment = mysqli_real_escape_string($connection, $_POST['comment']);
-
-    // Insert comment into the database
-    $insert_comment_query = "INSERT INTO Comments (ticket_id, user_id, comment) 
-                             VALUES ('$ticket_id', '$user_id', '$comment')";
-    if (mysqli_query($connection, $insert_comment_query)) {
-        echo "<p>Comment added successfully!</p>";
-    } else {
-        echo "<p>Error adding comment: " . mysqli_error($connection) . "</p>";
-    }
-}
-
-// Fetch comments for a specific ticket
-if (isset($_GET['ticket_id'])) {
-    $ticket_id = $_GET['ticket_id'];
-    $comment_query = "SELECT C.comment, U.name AS user_name, C.created_at
-                      FROM Comments C
-                      LEFT JOIN Users U ON C.user_id = U.id
-                      WHERE C.ticket_id = '$ticket_id'
-                      ORDER BY C.created_at ASC";
-    $comments_result = mysqli_query($connection, $comment_query);
-
-    // Check if there are any comments
-    $comments = [];
-    while ($row = mysqli_fetch_assoc($comments_result)) {
-        $comments[] = [
-            'user_name' => $row['user_name'],
-            'comment' => $row['comment'],
-            'created_at' => $row['created_at']
-        ];
-    }
-
-    // Return the comments as JSON
-    header('Content-Type: application/json');
-    echo json_encode(['comments' => $comments]);
-    exit(); // Make sure to stop further execution
-}
 ?>
 
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>My Tickets</title>
-
+    <title>My Tickets | Zappr</title>
+    <link href="<?php echo $base_url; ?>dist/output.css" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@0.344.0/dist/umd/lucide.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
     <style>
-        /* Global Styles */
-        body {
-            font-family: Arial, sans-serif;
-            background-color: #f4f7fc;
-            margin: 0;
-            padding: 0;
-        }
-
-        h2 {
-            color: #007bff;
-            margin-bottom: 20px;
-            text-align: center;
-        }
-
-        /* Table Styles */
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            background-color: #f8f9fc;
-            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-            border-radius: 8px;
-        }
-
-        th,
-        td {
-            padding: 12px;
-            text-align: left;
-            border-bottom: 1px solid #ddd;
-        }
-
-        th {
-            background-color: #007bff;
-            color: white;
-            font-size: 16px;
-        }
-
-        tr:nth-child(even) {
-            background-color: #f1f1f1;
-        }
-
-        tr:hover {
-            background-color: #e0e0e0;
-        }
-
-        .status {
-            font-weight: bold;
-            padding: 4px 8px;
-            border-radius: 4px;
-            color: white;
-        }
-
-        .open {
-            background-color: #007bff;
-        }
-
-        .in-progress {
-            background-color: #ffc107;
-        }
-
-        .resolved {
-            background-color: #28a745;
-        }
-
-        .closed {
-            background-color: #6c757d;
-        }
-
-        .on_hold {
-            background-color: #007bff;
-        }
-
-        /* Modal Styles */
-        .modal {
-            display: none;
-            position: fixed;
-            z-index: 1;
-            left: 0;
-            top: 0;
-            width: 100%;
-            height: 100%;
-            overflow: auto;
-            background-color: rgb(0, 0, 0);
-            background-color: rgba(0, 0, 0, 0.4);
-            padding-top: 60px;
-        }
-
-        .modal-content {
-            background-color: #fefefe;
-            margin: 5% auto;
-            padding: 20px;
-            border: 1px solid #888;
-            width: 80%;
-            max-width: 600px;
-        }
-
-        .close {
-            color: #aaa;
-            float: right;
-            font-size: 28px;
-            font-weight: bold;
-        }
-
-        .close:hover,
-        .close:focus {
-            color: black;
-            text-decoration: none;
-            cursor: pointer;
-        }
-
-        .comment-box {
-            margin-bottom: 10px;
-            padding: 10px;
-            background-color: #f8f9fc;
-            border-radius: 5px;
-            border: 1px solid #ddd;
-        }
-
-        .add-comment textarea {
-            width: 100%;
-            padding: 10px;
-            font-size: 14px;
-            border-radius: 4px;
-            border: 1px solid #ddd;
-            margin-bottom: 10px;
-        }
-
-        .add-comment button {
-            padding: 10px 20px;
-            background-color: #007bff;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-        }
-
-        .add-comment button:hover {
-            background-color: #007bff;
-        }
-
+        @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&display=swap');
+        body { font-family: 'Plus Jakarta Sans', sans-serif; }
     </style>
 </head>
-
-<body>
+<body class="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex min-h-screen">
 
     <?php include('header.php'); ?>
 
-    <h2>My Tickets</h2>
+    <main class="flex-grow p-6 lg:p-10">
+        <div class="flex flex-col md:flex-row md:items-center justify-between mb-8 gap-4">
+            <div>
+                <h1 class="text-3xl font-extrabold tracking-tight">My Tickets</h1>
+                <p class="text-slate-500 dark:text-slate-400">Manage and track your reported issues.</p>
+            </div>
+            
+            <form method="GET" class="flex flex-wrap gap-3">
+                <div class="relative">
+                    <i data-lucide="search" class="w-4 h-4 absolute left-3 top-3.5 text-slate-400"></i>
+                    <input type="text" name="search" value="<?php echo $search_query; ?>" placeholder="Search bugs..." 
+                           class="pl-10 pr-4 py-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl focus:ring-2 focus:ring-blue-500 outline-none text-sm w-64">
+                </div>
+                <select name="status" onchange="this.form.submit()" 
+                        class="px-4 py-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-sm outline-none">
+                    <option value="">All Status</option>
+                    <option value="open" <?php if($status_filter=='open') echo 'selected'; ?>>Open</option>
+                    <option value="resolved" <?php if($status_filter=='resolved') echo 'selected'; ?>>Resolved</option>
+                </select>
+            </form>
+        </div>
 
-    <div class="ticket-container">
-        <table>
-            <thead>
-                <tr>
-                    <th><a href="?sort=id">ID</a></th>
-                    <th><a href="?sort=title">Title</a></th>
-                    <th><a href="?sort=description">Description</a></th>
-                    <th><a href="?sort=status">Status</a></th>
-                    <th><a href="?sort=created_by">Created By</a></th>
-                    <!-- <th><a href="?sort=assigned_by">Assigned By</a></th> -->
-                    <th><a href="?sort=assigned_to">Assigned To</a></th>
-                    <th>Project</th>
-                    <th>Comments</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php if (mysqli_num_rows($result) > 0): ?>
-                    <?php while ($row = mysqli_fetch_assoc($result)): ?>
-                        <tr>
-                            <td><?php echo htmlspecialchars($row['id']); ?></td>
-                            <td><?php echo htmlspecialchars($row['title']); ?></td>
-                            <td><?php echo htmlspecialchars($row['description']); ?></td>
-                            <td>
-                                <span class="status <?php echo strtolower(str_replace('-', '_', $row['status'])); ?>">
-                                    <?php echo ucfirst($row['status']); ?>
-                                </span>
-                            </td>
-                            <td><?php echo $row['created_by_name'] ?: 'Not Assigned Yet'; ?></td>
-                            <td><?php echo $row['assigned_by_name'] ?: 'Not Assigned Yet'; ?></td>
-                            <td><?php echo $row['assigned_to_name'] ?: 'Not Assigned Yet'; ?></td>
-                            <td><?php echo $row['project_name'] ?: 'No Project'; ?></td>
-                            <td><a href="javascript:void(0);" onclick="openModal(<?php echo $row['id']; ?>)">View Comments</a></td>
+        <div class="bg-white dark:bg-slate-900 rounded-[2rem] border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="bg-slate-50/50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800">
+                            <th class="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">Ticket</th>
+                            <th class="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">Status</th>
+                            <th class="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">Assigned To</th>
+                            <th class="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500">Project</th>
+                            <th class="px-6 py-4 text-xs font-bold uppercase tracking-wider text-slate-500 text-right">Actions</th>
                         </tr>
-                    <?php endwhile; ?>
-                <?php else: ?>
-                    <tr>
-                        <td colspan="9">No tickets found.</td>
-                    </tr>
-                <?php endif; ?>
-            </tbody>
-        </table>
-    </div>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+                        <?php if (mysqli_num_rows($result) > 0): ?>
+                            <?php while ($row = mysqli_fetch_assoc($result)): 
+                                $status_color = [
+                                    'open' => 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
+                                    'resolved' => 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
+                                    'closed' => 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-400',
+                                    'in-progress' => 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                                ][strtolower($row['status'])] ?? 'bg-slate-100 text-slate-700';
+                            ?>
+                                <tr class="hover:bg-slate-50/50 dark:hover:bg-slate-800/30 transition-colors">
+                                    <td class="px-6 py-5">
+                                        <div class="font-bold text-slate-900 dark:text-white mb-1"><?php echo htmlspecialchars($row['title']); ?></div>
+                                        <div class="text-xs text-slate-500 truncate max-w-xs"><?php echo htmlspecialchars($row['description']); ?></div>
+                                    </td>
+                                    <td class="px-6 py-5">
+                                        <span class="px-3 py-1 rounded-full text-[11px] font-bold uppercase tracking-tight <?php echo $status_color; ?>">
+                                            <?php echo $row['status']; ?>
+                                        </span>
+                                    </td>
+                                    <td class="px-6 py-5">
+                                        <div class="flex items-center gap-2">
+                                            <div class="w-7 h-7 rounded-full bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-[10px] font-bold">
+                                                <?php echo substr($row['developer'] ?? 'NA', 0, 2); ?>
+                                            </div>
+                                            <span class="text-sm font-medium"><?php echo $row['developer'] ?: 'Unassigned'; ?></span>
+                                        </div>
+                                    </td>
+                                    <td class="px-6 py-5 text-sm font-medium text-slate-600 dark:text-slate-400">
+                                        <?php echo $row['project_name'] ?: 'General'; ?>
+                                    </td>
+                                    <td class="px-6 py-5 text-right">
+                                        <button onclick="openComments(<?php echo $row['id']; ?>)" 
+                                                class="inline-flex items-center gap-2 px-4 py-2 bg-slate-900 dark:bg-white dark:text-slate-900 text-white rounded-xl text-xs font-bold hover:bg-blue-600 dark:hover:bg-blue-500 transition-colors">
+                                            <i data-lucide="message-square" class="w-3.5 h-3.5"></i> Comments
+                                        </button>
+                                    </td>
+                                </tr>
+                            <?php endwhile; ?>
+                        <?php else: ?>
+                            <tr>
+                                <td colspan="5" class="px-6 py-20 text-center">
+                                    <div class="flex flex-col items-center">
+                                        <i data-lucide="inbox" class="w-12 h-12 text-slate-300 mb-4"></i>
+                                        <p class="text-slate-500 font-medium">No tickets found matching your criteria.</p>
+                                    </div>
+                                </td>
+                            </tr>
+                        <?php endif; ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </main>
 
-    <!-- Modal for comments -->
-    <div id="commentsModal" class="modal">
-        <div class="modal-content">
-            <span class="close" onclick="closeModal()">&times;</span>
-            <h3>Comments for Ticket <span id="ticketId"></span></h3>
-            <div id="commentsContainer"></div>
-            <div class="add-comment">
-                <textarea id="commentInput" placeholder="Enter your comment here..."></textarea>
-                <button onclick="addComment()">Add Comment</button>
+    <div id="commentModal" class="fixed inset-0 z-[150] hidden">
+        <div class="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onclick="closeModal()"></div>
+        <div class="absolute right-0 top-0 h-full w-full max-w-md bg-white dark:bg-slate-900 shadow-2xl flex flex-col animate-slide-in">
+            <div class="p-6 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
+                <h3 class="text-lg font-bold">Ticket Discussions</h3>
+                <button onclick="closeModal()" class="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition">
+                    <i data-lucide="x" class="w-5 h-5"></i>
+                </button>
+            </div>
+            
+            <div id="commentsList" class="flex-grow overflow-y-auto p-6 space-y-4">
+                </div>
+
+            <div class="p-6 border-t border-slate-100 dark:border-slate-800">
+                <textarea id="newComment" placeholder="Type your message..." 
+                          class="w-full p-4 bg-slate-50 dark:bg-slate-800 border-none rounded-2xl text-sm focus:ring-2 focus:ring-blue-500 outline-none resize-none h-24 mb-3"></textarea>
+                <input type="hidden" id="activeTicketId">
+                <button onclick="submitComment()" class="w-full bg-blue-600 text-white py-3 rounded-xl font-bold hover:bg-blue-700 transition">
+                    Post Comment
+                </button>
             </div>
         </div>
     </div>
 
     <script>
-        // Open the modal
-        function openModal(ticketId) {
-            document.getElementById('ticketId').innerText = ticketId;
-            document.getElementById('commentsModal').style.display = "block";
-            fetchComments(ticketId);
+        lucide.createIcons();
+
+        function openComments(tid) {
+            document.getElementById('activeTicketId').value = tid;
+            document.getElementById('commentModal').classList.remove('hidden');
+            fetchComments(tid);
         }
 
-        // Close the modal
         function closeModal() {
-            document.getElementById('commentsModal').style.display = "none";
+            document.getElementById('commentModal').classList.add('hidden');
         }
 
-        // Fetch comments for the ticket
-        function fetchComments(ticketId) {
-            fetch('view-tickets.php?ticket_id=' + ticketId)
-                .then(response => response.json()) // Ensure the response is JSON
+        function fetchComments(tid) {
+            const list = document.getElementById('commentsList');
+            list.innerHTML = '<p class="text-sm text-slate-500 italic">Loading conversation...</p>';
+            
+            fetch(`view-tickets.php?fetch_comments=${tid}`)
+                .then(r => r.json())
                 .then(data => {
-                    const commentsContainer = document.getElementById('commentsContainer');
-                    commentsContainer.innerHTML = ''; // Clear the container before adding new comments
-
-                    data.comments.forEach(comment => {
-                        const commentDiv = document.createElement('div');
-                        commentDiv.classList.add('comment-box');
-                        commentDiv.innerHTML = `<strong>${comment.user_name}</strong>: ${comment.comment} <br><small>${comment.created_at}</small>`;
-                        commentsContainer.appendChild(commentDiv);
+                    list.innerHTML = data.length ? '' : '<p class="text-sm text-slate-500">No comments yet. Be the first!</p>';
+                    data.forEach(c => {
+                        const div = document.createElement('div');
+                        div.className = "p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800";
+                        div.innerHTML = `<div class="flex justify-between mb-1">
+                                            <span class="font-bold text-xs text-blue-600">${c.name}</span>
+                                            <span class="text-[10px] text-slate-400">${c.created_at}</span>
+                                         </div>
+                                         <p class="text-sm text-slate-700 dark:text-slate-300">${c.comment}</p>`;
+                        list.appendChild(div);
                     });
-                })
-                .catch(error => {
-                    console.error('Error fetching comments:', error);
-                    alert('Failed to load comments.');
                 });
         }
 
-        // Add a comment
-        function addComment() {
-            const ticketId = document.getElementById('ticketId').innerText;
-            const comment = document.getElementById('commentInput').value; // Grabbing the value of the comment input field
+        function submitComment() {
+            const tid = document.getElementById('activeTicketId').value;
+            const msg = document.getElementById('newComment').value;
+            if(!msg) return;
 
-            if (!comment) {
-                alert('Please enter a comment.');
-                return;
-            }
+            const fd = new FormData();
+            fd.append('ticket_id', tid);
+            fd.append('comment', msg);
 
-            const formData = new FormData();
-            formData.append('ticket_id', ticketId);
-            formData.append('comment', comment);
-
-            fetch('add-comment.php', {
-                    method: 'POST',
-                    body: formData
-                })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        alert('Comment added successfully!');
-                        fetchComments(ticketId); // Reload comments after adding a new one
-                        document.getElementById('commentInput').value = ''; // Clear the input field
-                    } else {
-                        alert(data.error); // Show the error message if there's an issue
+            fetch('add-comment.php', { method: 'POST', body: fd })
+                .then(r => r.json())
+                .then(res => {
+                    if(res.success) {
+                        document.getElementById('newComment').value = '';
+                        fetchComments(tid);
                     }
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    alert('An error occurred while adding the comment.');
                 });
         }
     </script>
-
 </body>
-
 </html>

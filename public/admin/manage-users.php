@@ -1,470 +1,210 @@
 <?php
 session_start();
 include('../../config/config.php');
-include('../../includes/auth.php');
 
-// Check if the user is an admin
-if ($_SESSION['role'] != 'admin') {
-    header("Location: ../login/index.php");
-    exit();
+// ✅ Admin Security Guard
+if (!isset($_SESSION['role']) || strtolower($_SESSION['role']) !== 'admin') {
+    die("<div class='p-6 text-red-500 font-bold text-center'>Unauthorized Access</div>");
 }
 
-// Fetch all users
-$query = "SELECT * FROM Users";
+// Fetch all users with sorted priority
+$query = "SELECT * FROM Users ORDER BY CASE WHEN role = 'admin' THEN 1 WHEN role = 'developer' THEN 2 ELSE 3 END, name ASC";
 $result = mysqli_query($connection, $query);
 ?>
 
-<!DOCTYPE html>
-<html lang="en">
+<div class="animate-fade-in">
+    <div class="mb-8 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+            <h1 class="text-3xl font-black tracking-tight text-slate-900 dark:text-white">User Directory</h1>
+            <p class="text-slate-500 dark:text-slate-400 text-sm italic">Manage system access levels and security credentials.</p>
+        </div>
+        <button onclick="openUserModal('create')" class="inline-flex items-center gap-2 px-6 py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-2xl text-sm font-black transition-all shadow-lg shadow-emerald-100 dark:shadow-none hover:scale-[1.02] active:scale-95">
+            <i data-lucide="user-plus" class="w-5 h-5"></i>
+            Onboard User
+        </button>
+    </div>
 
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Manage Users</title>
-    <link rel="stylesheet" href="style.css">
-    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
-    <style>
-        /* Modal Styling */
-        .modal {
-            display: none;
-            position: fixed;
-            z-index: 1;
-            left: 0;
-            top: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0, 0, 0, 0.4);
-            /* Dark background */
-            overflow: auto;
-        }
-
-        .modal-content {
-            background-color: #fff;
-            margin: 10% auto;
-            padding: 20px;
-            border: 1px solid #888;
-            width: 50%;
-            max-width: 600px;
-            min-width: 300px;
-            border-radius: 8px;
-            /* Rounded corners */
-            box-shadow: 0px 4px 8px rgba(0, 0, 0, 0.1);
-            /* Soft shadow */
-        }
-
-        .close-btn {
-            color: #aaa;
-            font-size: 28px;
-            font-weight: bold;
-            float: right;
-            cursor: pointer;
-        }
-
-        .close-btn:hover {
-            color: #000;
-            text-decoration: none;
-        }
-
-        /* Modal Form Styling */
-        .modal form {
-            display: flex;
-            flex-direction: column;
-        }
-
-        .modal label {
-            margin-bottom: 8px;
-            font-weight: bold;
-            font-size: 16px;
-        }
-
-        .modal input[type="text"],
-        .modal input[type="email"],
-        .modal select {
-            padding: 10px;
-            margin-bottom: 15px;
-            font-size: 14px;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-        }
-
-        .modal button {
-            background-color: #28a745;
-            /* Green color for buttons */
-            color: white;
-            padding: 10px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 16px;
-        }
-
-        .modal button:hover {
-            background-color: #218838;
-            /* Darker green when hovering */
-        }
-
-        /* Specific Styles for Update Modal */
-        #updateUserModal .modal-content {
-            width: 60%;
-            /* Slightly wider for better visibility */
-        }
-
-        #updateUserModal label {
-            color: #333;
-            /* Darker text for the update form */
-        }
-
-        #updateUserModal input,
-        #updateUserModal select {
-            width: 100%;
-            /* Full width inputs for a cleaner look */
-            box-sizing: border-box;
-            /* Ensures padding does not overflow */
-        }
-
-        #updateUserModal button {
-            background-color: #007bff;
-            /* Blue color for update buttons */
-        }
-
-        #updateUserModal button:hover {
-            background-color: #0056b3;
-            /* Darker blue when hovering */
-        }
-
-        /* Specific Styles for View User Modal */
-        #viewUserModal .modal-content {
-            width: 60%;
-            /* Slightly wider for better visibility */
-            background-color: #f9f9f9;
-            /* Light gray background for a softer feel */
-            border-radius: 8px;
-            /* Rounded corners */
-            box-shadow: 0px 4px 8px rgba(0, 0, 0, 0.1);
-            /* Soft shadow */
-            padding: 30px;
-        }
-
-        #viewUserModal .modal-content h2 {
-            font-size: 24px;
-            margin-bottom: 20px;
-            color: #333;
-            /* Dark text for better readability */
-        }
-
-        #viewUserModal .modal-content .close-btn {
-            color: #aaa;
-            font-size: 28px;
-            font-weight: bold;
-            position: absolute;
-            top: 10px;
-            right: 20px;
-            cursor: pointer;
-        }
-
-        #viewUserModal .modal-content .close-btn:hover {
-            color: #000;
-            text-decoration: none;
-        }
-
-        #viewUserModal .modal-content .user-info {
-            font-size: 16px;
-            color: #555;
-        }
-
-        #viewUserModal .modal-content .user-info .info-item {
-            margin-bottom: 10px;
-        }
-
-        #viewUserModal .modal-content .user-info .info-item strong {
-            color: #333;
-            /* Darker text for labels */
-        }
-
-        /* Button for creating a user */
-        .create-user-btn {
-            margin-bottom: 20px;
-            padding: 10px 20px;
-            background-color: #28a745;
-            color: white;
-            border: none;
-            cursor: pointer;
-            font-size: 16px;
-        }
-
-        .create-user-btn:hover {
-            background-color: #218838;
-        }
-
-        /* To show modal */
-        .modal.show {
-            display: block;
-        }
-    </style>
-
-</head>
-
-<body>
-
-    <div id="content-area">
-        <!-- Create User Button -->
-        <button class="create-user-btn" onclick="openCreateUserModal()">Create User</button>
-
-        <table>
+    <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-[2.5rem] overflow-hidden shadow-sm">
+        <table class="w-full text-left border-collapse">
             <thead>
-                <tr>
-                    <th>User ID</th>
-                    <th>Name</th>
-                    <th>Email</th>
-                    <th>Role</th>
-                    <th>Actions</th>
+                <tr class="bg-slate-50/50 dark:bg-slate-800/50 border-b border-slate-100 dark:border-slate-800">
+                    <th class="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Identity</th>
+                    <th class="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Email Address</th>
+                    <th class="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400">Access Level</th>
+                    <th class="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-slate-400 text-right">Actions</th>
                 </tr>
             </thead>
-            <tbody>
-                <?php while ($user = mysqli_fetch_assoc($result)) { ?>
-                    <tr>
-                        <td><?php echo $user['id']; ?></td>
-                        <td><?php echo htmlspecialchars($user['name']); ?></td>
-                        <td><?php echo htmlspecialchars($user['email']); ?></td>
-                        <td><?php echo ucfirst($user['role']); ?></td>
-                        <td>
-                            <a href="#" class="view-user-link" data-id="<?php echo $user['id']; ?>">View</a> |
-                            <a href="#" class="update-user-link" data-id="<?php echo $user['id']; ?>">Update</a> |
-                            <a href="#" class="delete-user-link" data-id="<?php echo $user['id']; ?>">Delete</a>
-                        </td>
-                    </tr>
-                <?php } ?>
+            <tbody class="divide-y divide-slate-100 dark:divide-slate-800">
+                <?php while ($user = mysqli_fetch_assoc($result)): 
+                    $role_badge = [
+                        'admin'     => 'bg-rose-100 text-rose-700 dark:bg-rose-900/30 dark:text-rose-400',
+                        'developer' => 'bg-indigo-100 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-400',
+                        'user'      => 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400'
+                    ][strtolower($user['role'])] ?? 'bg-slate-100 text-slate-700';
+                ?>
+                <tr class="hover:bg-slate-50/50 dark:hover:bg-slate-800/20 transition-all group" id="user-row-<?php echo $user['id']; ?>">
+                    <td class="px-6 py-4">
+                        <div class="flex items-center gap-3">
+                            <div class="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center font-black text-slate-400 group-hover:bg-emerald-600 group-hover:text-white transition-all shadow-inner">
+                                <?php echo strtoupper(substr($user['name'], 0, 1)); ?>
+                            </div>
+                            <div>
+                                <div class="font-bold text-slate-900 dark:text-white leading-tight"><?php echo htmlspecialchars($user['name']); ?></div>
+                                <div class="text-[10px] text-slate-400 font-mono tracking-tighter">UID: #<?php echo str_pad($user['id'], 4, '0', STR_PAD_LEFT); ?></div>
+                            </div>
+                        </div>
+                    </td>
+                    <td class="px-6 py-4">
+                        <span class="text-sm font-medium text-slate-600 dark:text-slate-400 underline decoration-slate-200 dark:decoration-slate-700 underline-offset-4 decoration-2"><?php echo htmlspecialchars($user['email']); ?></span>
+                    </td>
+                    <td class="px-6 py-4">
+                        <span class="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-tighter <?php echo $role_badge; ?>">
+                            <?php echo $user['role']; ?>
+                        </span>
+                    </td>
+                    <td class="px-6 py-4 text-right space-x-1">
+                        <button onclick="viewUser(<?php echo $user['id']; ?>)" class="p-2 hover:bg-blue-50 dark:hover:bg-blue-900/20 text-slate-400 hover:text-blue-600 rounded-lg transition-all" title="View Profile">
+                            <i data-lucide="info" class="w-4 h-4"></i>
+                        </button>
+                        <button onclick="editUser(<?php echo $user['id']; ?>)" class="p-2 hover:bg-emerald-50 dark:hover:bg-emerald-900/20 text-slate-400 hover:text-emerald-600 rounded-lg transition-all" title="Edit Permissions">
+                            <i data-lucide="shield-check" class="w-4 h-4"></i>
+                        </button>
+                        <button onclick="deleteUser(<?php echo $user['id']; ?>)" class="p-2 hover:bg-rose-50 dark:hover:bg-rose-900/20 text-slate-400 hover:text-rose-600 rounded-lg transition-all" title="Revoke Access">
+                            <i data-lucide="user-minus" class="w-4 h-4"></i>
+                        </button>
+                    </td>
+                </tr>
+                <?php endwhile; ?>
             </tbody>
         </table>
     </div>
+</div>
 
-    <!-- CREATE USER MODAL -->
-    <!-- CREATE USER MODAL -->
-    <div id="createUserModal" class="modal">
-        <div class="modal-content">
-            <span class="close-btn" onclick="closeCreateUserModal()">&times;</span>
-            <h2>Create New User</h2>
-            <form id="createUserForm">
-                <label for="userName">Name:</label><br>
-                <input type="text" id="userName" name="userName" required><br><br>
-
-                <label for="userEmail">Email:</label><br>
-                <input type="email" id="userEmail" name="userEmail" required><br><br>
-
-                <label for="userPassword">Password:</label><br>
-                <input type="password" id="userPassword" name="userPassword" required><br><br>
-
-                <label for="userRole">Role:</label><br>
-                <select id="userRole" name="userRole" required>
-                    <option value="admin">Admin</option>
-                    <option value="user">User</option>
-                    <option value="developer">Developer</option> <!-- Added Developer role -->
-                </select><br><br>
-
-                <button type="submit">Create User</button>
-            </form>
+<div id="userModal" class="fixed inset-0 z-50 hidden flex items-center justify-center p-4">
+    <div class="absolute inset-0 bg-slate-900/60 backdrop-blur-sm transition-opacity" onclick="closeUserModal()"></div>
+    <div class="relative w-full max-w-lg">
+        <div class="bg-white dark:bg-slate-900 rounded-[2.5rem] shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden transform transition-all">
+            <div id="userModalBody" class="p-8">
+                </div>
         </div>
     </div>
+</div>
 
+<script>
+    lucide.createIcons();
 
-    <!-- VIEW USER MODAL -->
-    <div id="viewUserModal" class="modal">
-        <div class="modal-content">
-            <span class="close-btn">&times;</span>
-            <h2>User Details</h2>
-            <div id="userDetailsContainer"></div>
-        </div>
-    </div>
-    <!-- UPDATE USER MODAL -->
-    <div id="updateUserModal" class="modal">
-        <div class="modal-content">
-            <span class="close-btn">&times;</span>
-            <h2>Update User</h2>
-            <form id="updateUserForm">
-                <input type="hidden" id="updateUserId" name="userId">
-                <label for="updateUserName">Name:</label><br>
-                <input type="text" id="updateUserName" name="userName" required><br><br>
-                <label for="updateUserEmail">Email:</label><br>
-                <input type="email" id="updateUserEmail" name="userEmail" required><br><br>
-                <label for="updateUserRole">Role:</label><br>
-                <select id="updateUserRole" name="userRole" required>
-                    <option value="admin">Admin</option>
-                    <option value="developer">Developer</option> <!-- Added Developer role -->
-                    <option value="user">User</option>
-                </select><br><br>
-                <button type="submit">Update User</button>
-            </form>
-        </div>
-    </div>
+    // 🛠 MODAL CONTROLLER
+    function openUserModal(type, id = null) {
+        const body = $('#userModalBody');
+        $('#userModal').removeClass('hidden').addClass('flex');
 
-    <script>
-        // Open Create User Modal
-        function openCreateUserModal() {
-            document.getElementById("createUserModal").style.display = "block";
+        if (type === 'create') {
+            body.html(`
+                <div class="mb-6">
+                    <h2 class="text-2xl font-black text-slate-900 dark:text-white">Onboard New User</h2>
+                    <p class="text-slate-500 text-sm italic">Generate system credentials and assign initial scope.</p>
+                </div>
+                <form id="createUserForm" class="space-y-4">
+                    <div class="space-y-1">
+                        <label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Full Name</label>
+                        <input type="text" name="userName" placeholder="John Doe" required class="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-none rounded-xl font-bold focus:ring-2 focus:ring-emerald-500 transition-all">
+                    </div>
+                    <div class="space-y-1">
+                        <label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Email Address</label>
+                        <input type="email" name="userEmail" placeholder="john@company.com" required class="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-none rounded-xl focus:ring-2 focus:ring-emerald-500 transition-all">
+                    </div>
+                    <div class="space-y-1">
+                        <label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Initial Password</label>
+                        <input type="password" name="userPassword" placeholder="••••••••" required class="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-none rounded-xl focus:ring-2 focus:ring-emerald-500 transition-all">
+                    </div>
+                    <div class="space-y-1">
+                        <label class="text-[10px] font-black uppercase tracking-widest text-slate-400 ml-1">Authority Level</label>
+                        <select name="userRole" class="w-full px-4 py-3 bg-slate-50 dark:bg-slate-800 border-none rounded-xl font-bold focus:ring-2 focus:ring-emerald-500 transition-all cursor-pointer">
+                            <option value="user">Standard User</option>
+                            <option value="developer" selected>Developer</option>
+                            <option value="admin">System Admin</option>
+                        </select>
+                    </div>
+                    <div class="flex gap-2 pt-6">
+                        <button type="submit" class="flex-grow bg-emerald-600 text-white font-black py-4 rounded-2xl hover:bg-emerald-700 transition-all shadow-lg shadow-emerald-100 dark:shadow-none">Deploy Account</button>
+                        <button type="button" onclick="closeUserModal()" class="px-6 py-4 bg-slate-100 dark:bg-slate-800 text-slate-500 font-bold rounded-2xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-all">Cancel</button>
+                    </div>
+                </form>
+            `);
         }
+    }
 
-        // // Close Create User Modal
-        // function closeCreateUserModal() {
-        //     document.getElementById("createUserModal").style.display = "none";
-        // }
+    function closeUserModal() { 
+        $('#userModal').addClass('hidden').removeClass('flex'); 
+    }
 
-        // Close the modal when the "X" button is clicked
-        $(document).on('click', '.close-btn', function() {
-            $(this).closest('.modal').hide(); // Hide the modal that contains the clicked "X" button
+    // Close on Escape key
+    $(document).keyup(function(e) {
+        if (e.key === "Escape") closeUserModal();
+    });
+
+    function viewUser(id) {
+        $('#userModal').removeClass('hidden').addClass('flex');
+        $('#userModalBody').html(`
+            <div class="flex flex-col items-center justify-center p-12 text-slate-400">
+                <div class="animate-spin mb-4"><i data-lucide="loader-2" class="w-8 h-8"></i></div>
+                <p class="font-bold text-xs uppercase tracking-widest">Accessing Profile...</p>
+            </div>
+        `);
+        lucide.createIcons();
+        $.get('./api/fetch-user-details.php', { user_id: id }, function(data) {
+            $('#userModalBody').html(data);
+            lucide.createIcons();
         });
+    }
 
-
-        ///i will come back to this
-        // Close the modal if clicked outside of it
-        window.onclick = function(event) {
-            if (event.target == document.getElementById("createUserModal")) {
-                document.getElementById("createUserModal").style.display = "none";
-            }
-            if (event.target == document.getElementById("viewUserModal")) {
-                document.getElementById("viewUserModal").style.display = "none";
-            }
-            if (event.target == document.getElementById("updateUserModal")) {
-                document.getElementById("updateUserModal").style.display = "none";
-            }
-        }
-
-
-
-        // Show the update user modal after fetching user data
-        // $('#updateUserModal').show(); // Make sure this is triggered after populating the data
-
-
-        // Handle Create User Form Submission
-        // Handle Create User Form Submission
-        $(document).on('submit', '#createUserForm', function(e) {
-            e.preventDefault();
-
-            var userData = {
-                userName: $('#userName').val(),
-                userEmail: $('#userEmail').val(),
-                userPassword: $('#userPassword').val(), // Include the password
-                userRole: $('#userRole').val()
-            };
-
-            $.ajax({
-                url: 'create-user-action.php',
-                type: 'POST',
-                data: userData,
-                success: function(response) {
-                    alert(response);
-                    location.reload(); // Reload to show the new user
-                },
-                error: function(xhr, status, error) {
-                    alert("Error: " + error);
-                }
-            });
-
-            document.getElementById("createUserModal").style.display = "none"; // Close the modal
+    function editUser(id) {
+        $('#userModal').removeClass('hidden').addClass('flex');
+        $('#userModalBody').html(`
+            <div class="flex flex-col items-center justify-center p-12 text-emerald-500">
+                <div class="animate-pulse mb-4"><i data-lucide="shield-check" class="w-8 h-8"></i></div>
+                <p class="font-bold text-xs uppercase tracking-widest">Fetching Permissions...</p>
+            </div>
+        `);
+        lucide.createIcons();
+        $.get('fetch-user-details-update.php', { user_id: id }, function(data) {
+            $('#userModalBody').html(data);
+            lucide.createIcons();
         });
+    }
 
-
-        // View User Details
-        $(document).on('click', '.view-user-link', function(e) {
-            e.preventDefault();
-            const userId = $(this).data('id');
-
-            $.ajax({
-                url: 'fetch-user-details.php',
-                type: 'GET',
-                data: {
-                    user_id: userId
-                },
-                success: function(data) {
-                    $('#userDetailsContainer').html(data);
-                    $('#viewUserModal').show();
-                },
-                error: function() {
-                    alert("Failed to load user details.");
-                }
-            });
-        });
-
-
-
-
-        // Fetch user details for update modal
-        $(document).on('click', '.update-user-link', function(e) {
-            e.preventDefault();
-            const userId = $(this).data('id');
-
-            $.ajax({
-                url: 'fetch-user-details-update.php',
-                type: 'GET',
-                data: {
-                    user_id: userId
-                },
-                success: function(data) {
-                    const user = JSON.parse(data); // Assuming response is JSON
-                    $('#updateUserId').val(user.id);
-                    $('#updateUserName').val(user.name);
-                    $('#updateUserEmail').val(user.email);
-                    $('#updateUserRole').val(user.role);
-                    $('#updateUserModal').show();
-                }
-            });
-        });
-
-
-        // Handle Update User Form Submission
-        // Handle Update User Form Submission
-        // Handle Update User Form Submission
-        $(document).on('submit', '#updateUserForm', function(e) {
-            e.preventDefault();
-
-            var userData = {
-                userId: $('#updateUserId').val(),
-                userName: $('#updateUserName').val(),
-                userEmail: $('#updateUserEmail').val(),
-                userRole: $('#updateUserRole').val()
-            };
-
-            $.ajax({
-                url: 'update-user-action.php',
-                type: 'POST',
-                data: userData,
-                success: function(response) {
-                    alert(response); // Alert the user about the update status
-                    location.reload(); // Reload the page to show updated user data
-                },
-                error: function(xhr, status, error) {
-                    alert("Error: " + error); // Show any errors that occurred
-                }
-            });
-
-            document.getElementById("updateUserModal").style.display = "none"; // Close the modal
-        });
-
-
-
-        // Delete User
-        $(document).on('click', '.delete-user-link', function(e) {
-            e.preventDefault();
-            const userId = $(this).data('id');
-
-            if (confirm("Are you sure you want to delete this user?")) {
-                $.ajax({
-                    url: 'delete-user-action.php',
-                    type: 'POST',
-                    data: {
-                        user_id: userId
-                    },
-                    success: function(response) {
-                        alert(response);
-                        location.reload(); // Reload to show the updated list
-                    },
-                    error: function() {
-                        alert("Failed to delete user.");
-                    }
+    function deleteUser(id) {
+        Swal.fire({
+            title: 'Revoke Access?',
+            text: "This user will be permanently removed from the system.",
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#e11d48',
+            cancelButtonColor: '#64748b',
+            confirmButtonText: 'Yes, Terminate',
+            background: document.documentElement.classList.contains('dark') ? '#0f172a' : '#fff',
+            color: document.documentElement.classList.contains('dark') ? '#f1f5f9' : '#0f172a'
+        }).then((result) => {
+            if (result.isConfirmed) {
+                $.post('./actions/delete-user-action.php', { user_id: id }, function(res) {
+                    $(`#user-row-${id}`).addClass('scale-95 opacity-0 transition-all duration-500');
+                    setTimeout(() => $(`#user-row-${id}`).remove(), 500);
+                    Swal.fire('Revoked!', 'User access has been terminated.', 'success');
                 });
             }
         });
-    </script>
+    }
 
-</body>
-
-</html>
+    $(document).on('submit', '#createUserForm', function(e) {
+        e.preventDefault();
+        const btn = $(this).find('button[type="submit"]');
+        btn.html('<i data-lucide="loader-2" class="w-5 h-5 animate-spin mx-auto"></i>');
+        lucide.createIcons();
+        
+        $.post('create-user-action.php', $(this).serialize(), function(response) {
+            closeUserModal();
+            Swal.fire('Identity Verified', 'New user has been established.', 'success');
+            loadPage('manage-users');
+        });
+    });
+</script>
