@@ -28,5 +28,5 @@ session_destroy();
 
 // 5. Redirect to the authentication gateway
 // Adjust the path below to match your login page location
-header("Location: ../../login/index.php?logout=success");
+header("Location: ../../../login/index.php?logout=success");
 exit();

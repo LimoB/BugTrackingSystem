@@ -1,49 +1,61 @@
 <?php
 session_start();
+header('Content-Type: application/json'); // Set header for JSON response
 include('../../config/config.php');
 
-// Enable error reporting for debugging
-error_reporting(E_ALL);
-ini_set('display_errors', 1);
+// Enable error reporting only for development; disable in production
+// error_reporting(E_ALL);
+// ini_set('display_errors', 1);
 
-// Check if the necessary POST data is available
-if (isset($_POST['ticket_id'], $_POST['user_id'], $_POST['comment'])) {
+$response = ['success' => false, 'message' => ''];
+
+// Ensure user is logged in
+if (!isset($_SESSION['user_id'])) {
+    $response['message'] = "Unauthorized access.";
+    echo json_encode($response);
+    exit();
+}
+
+// Check for required POST data
+if (isset($_POST['ticket_id'], $_POST['comment'])) {
     $ticket_id = intval($_POST['ticket_id']);
-    $user_id = intval($_POST['user_id']);
-    $comment = trim($_POST['comment']);
+    $user_id   = intval($_SESSION['user_id']); // Use Session ID for security
+    $comment   = trim($_POST['comment']);
 
-    // Validate the comment text
+    // 1. Validation
     if (empty($comment)) {
-        echo "Comment cannot be empty.";
+        $response['message'] = "Comment content cannot be empty.";
+        echo json_encode($response);
         exit();
     }
 
-    // Check if the ticket exists in the Tickets table
-    $ticket_check_query = "SELECT id FROM Tickets WHERE id = ?";
-    $ticket_check_stmt = $connection->prepare($ticket_check_query);
-    $ticket_check_stmt->bind_param("i", $ticket_id);
-    $ticket_check_stmt->execute();
-    $ticket_check_result = $ticket_check_stmt->get_result();
-
-    if ($ticket_check_result->num_rows == 0) {
-        echo "Error: The ticket you are trying to comment on does not exist.";
+    // 2. Verify Ticket exists
+    $check_stmt = $connection->prepare("SELECT id FROM Tickets WHERE id = ?");
+    $check_stmt->bind_param("i", $ticket_id);
+    $check_stmt->execute();
+    if ($check_stmt->get_result()->num_rows === 0) {
+        $response['message'] = "Target ticket does not exist.";
+        echo json_encode($response);
         exit();
     }
 
-    // Prepare and execute the database query to insert the comment
-    $comment_query = "INSERT INTO Comments (ticket_id, user_id, comment) VALUES (?, ?, ?)";  // Changed issue_id to ticket_id
-    if ($stmt = $connection->prepare($comment_query)) {
-        // Bind parameters and execute
+    // 3. Insert Comment
+    $query = "INSERT INTO Comments (ticket_id, user_id, comment, created_at) VALUES (?, ?, ?, NOW())";
+    if ($stmt = $connection->prepare($query)) {
         $stmt->bind_param("iis", $ticket_id, $user_id, $comment);
         
         if ($stmt->execute()) {
-            echo "Comment added successfully!";
+            $response['success'] = true;
+            $response['message'] = "Comment posted successfully.";
         } else {
-            echo "Error: " . $stmt->error;  // Show specific error if the query fails
+            $response['message'] = "Database error: " . $stmt->error;
         }
     } else {
-        echo "Error preparing the SQL statement.";  // In case the statement fails to prepare
+        $response['message'] = "SQL preparation failed.";
     }
 } else {
-    echo "Required data not received.";
+    $response['message'] = "Required data fields are missing.";
 }
+
+// Send the final JSON response
+echo json_encode($response);

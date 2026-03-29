@@ -1,8 +1,8 @@
 <?php
 session_start();
 
-// ✅ Security Check: Developer Role Only
-if (!isset($_SESSION['user_id']) || strtolower($_SESSION['role']) !== 'developer') {
+// 🛡️ Security Check: Developer Access Only
+if (!isset($_SESSION['user_id']) || strtolower($_SESSION['role'] ?? '') !== 'developer') {
     header("Location: ../login/index.php");
     exit();
 }
@@ -10,14 +10,14 @@ if (!isset($_SESSION['user_id']) || strtolower($_SESSION['role']) !== 'developer
 include('../../config/config.php');
 $base_url = "/php-bugtracking-system/";
 
-// ✅ Fetch Developer Data
+// 🔍 Fetch Developer Profile
 $user_id = $_SESSION['user_id'];
 $stmt = $connection->prepare("SELECT name, email FROM Users WHERE id = ?");
 $stmt->bind_param("i", $user_id);
 $stmt->execute();
 $user = $stmt->get_result()->fetch_assoc();
 
-// Quick Stats for the "Home" view
+// 📊 Global Stats for Sidebar/Header
 $stmt_count = $connection->prepare("SELECT COUNT(*) as count FROM Tickets WHERE assigned_to = ? AND status != 'resolved'");
 $stmt_count->bind_param("i", $user_id);
 $stmt_count->execute();
@@ -29,171 +29,163 @@ $my_active_bugs = $stmt_count->get_result()->fetch_assoc()['count'];
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>DevHub | Zappr</title>
+    <title>Developer Terminal | Zappr</title>
     
     <link href="<?php echo $base_url; ?>dist/output.css" rel="stylesheet">
     <script src="https://unpkg.com/lucide@0.344.0/dist/umd/lucide.js"></script>
     <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
 
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
-        body { font-family: 'Plus Jakarta Sans', sans-serif; }
+        body { font-family: 'Plus Jakarta Sans', sans-serif; overflow-x: hidden; }
         
+        /* Standard CSS for active states (Browsers don't support @apply) */
         .nav-active {
-            @apply bg-indigo-50 text-indigo-600 dark:bg-indigo-900/30 dark:text-indigo-400 border-r-4 border-indigo-600;
+            background-color: #4f46e5; /* indigo-600 */
+            color: white !important;
+            box-shadow: 0 10px 15px -3px rgba(165, 180, 252, 0.4);
+        }
+        
+        .dark .nav-active {
+            box-shadow: none;
         }
 
-        /* Smooth loading transition */
-        #content-area {
-            transition: opacity 0.2s ease-in-out;
-        }
-        .loading { opacity: 0.5; pointer-events: none; }
+        .dark ::-webkit-scrollbar { width: 6px; }
+        .dark ::-webkit-scrollbar-track { background: #0f172a; }
+        .dark ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 10px; }
     </style>
 </head>
 <body class="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex min-h-screen">
 
-    <aside class="w-64 border-r border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 hidden md:flex flex-col sticky top-0 h-screen">
-        <div class="p-6 flex items-center gap-3 border-b border-slate-100 dark:border-slate-800">
-            <div class="bg-indigo-600 p-1.5 rounded-lg shadow-lg shadow-indigo-200 dark:shadow-none">
-                <i data-lucide="terminal" class="text-white w-5 h-5"></i>
+    <aside class="w-72 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl border-r border-slate-200 dark:border-slate-800 hidden md:flex flex-col sticky top-0 h-screen z-40 transition-all duration-300">
+        <div class="p-8 mb-4">
+            <div class="flex items-center gap-3">
+                <div class="bg-indigo-600 p-2 rounded-xl shadow-xl shadow-indigo-200 dark:shadow-none">
+                    <i data-lucide="terminal" class="text-white w-5 h-5"></i>
+                </div>
+                <span class="text-2xl font-black tracking-tighter uppercase">DevHub<span class="text-indigo-600">.</span></span>
             </div>
-            <span class="text-xl font-bold tracking-tight">DevHub<span class="text-indigo-600">.</span></span>
+            <div class="mt-4 flex items-center gap-2">
+                <span class="relative flex h-2 w-2">
+                    <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                </span>
+                <span class="text-[10px] font-black uppercase tracking-widest text-slate-400">System Pulse: Online</span>
+            </div>
         </div>
 
-        <nav class="flex-grow p-4 space-y-2 mt-4">
-            <a href="#" class="nav-link flex items-center gap-3 px-4 py-3 rounded-xl font-bold transition-all hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-500" data-page="dashboard_home">
-                <i data-lucide="layout-grid" class="w-5 h-5"></i> Overview
+        <nav class="flex-grow px-4 space-y-1">
+            <p class="px-4 text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Main Console</p>
+            
+            <a href="javascript:void(0)" onclick="loadPage('dashboard_home')" class="nav-link flex items-center gap-3 px-4 py-3.5 rounded-2xl font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all" data-page="dashboard_home">
+                <i data-lucide="cpu" class="w-5 h-5"></i> Overview
             </a>
-            <a href="#" class="nav-link flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-500" data-page="assigned-tickets">
-                <i data-lucide="bug" class="w-5 h-5"></i> Assigned to Me
+
+            <a href="javascript:void(0)" onclick="loadPage('assigned-tickets')" class="nav-link flex items-center gap-3 px-4 py-3.5 rounded-2xl font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all" data-page="assigned-tickets">
+                <i data-lucide="bug" class="w-5 h-5"></i> My Queue
                 <?php if($my_active_bugs > 0): ?>
-                    <span class="ml-auto bg-indigo-600 text-white text-[10px] px-2 py-0.5 rounded-full"><?php echo $my_active_bugs; ?></span>
+                    <span class="ml-auto bg-rose-500 text-white text-[10px] font-black px-2 py-0.5 rounded-lg shadow-lg shadow-rose-200 dark:shadow-none"><?php echo $my_active_bugs; ?></span>
                 <?php endif; ?>
             </a>
-            <a href="#" class="nav-link flex items-center gap-3 px-4 py-3 rounded-xl font-medium transition-all hover:bg-slate-50 dark:hover:bg-slate-800 text-slate-500" data-page="view-tickets">
+
+            <a href="javascript:void(0)" onclick="loadPage('view-tickets')" class="nav-link flex items-center gap-3 px-4 py-3.5 rounded-2xl font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all" data-page="view-tickets">
                 <i data-lucide="database" class="w-5 h-5"></i> Global Backlog
             </a>
+
+            <div class="pt-6">
+                <p class="px-4 text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Maintenance</p>
+                <a href="javascript:void(0)" onclick="loadPage('system-logs')" class="nav-link flex items-center gap-3 px-4 py-3.5 rounded-2xl font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-all" data-page="system-logs">
+                    <i data-lucide="scroll-text" class="w-5 h-5"></i> Error Logs
+                </a>
+            </div>
         </nav>
 
-        <div class="p-4 border-t border-slate-100 dark:border-slate-800">
-            <div class="flex items-center gap-3 px-4 py-3 mb-2">
-                <div class="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900/40 flex items-center justify-center text-indigo-600 font-bold text-xs">
-                    <?php echo strtoupper(substr($user['name'], 0, 2)); ?>
-                </div>
-                <div class="truncate">
-                    <p class="text-xs font-bold truncate"><?php echo htmlspecialchars($user['name']); ?></p>
-                    <p class="text-[10px] text-slate-500 uppercase tracking-tighter">Developer Role</p>
+        <div class="p-6 mt-auto border-t border-slate-100 dark:border-slate-800">
+            <div class="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-[1.5rem] mb-4">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 rounded-xl bg-indigo-600 flex items-center justify-center text-white font-black shadow-lg">
+                        <?php echo strtoupper(substr($user['name'] ?? 'D', 0, 1)); ?>
+                    </div>
+                    <div class="truncate">
+                        <p class="text-xs font-black truncate text-slate-900 dark:text-white"><?php echo htmlspecialchars($user['name'] ?? 'Developer'); ?></p>
+                        <p class="text-[9px] text-indigo-500 font-black uppercase tracking-widest">Developer</p>
+                    </div>
                 </div>
             </div>
             
-            <button onclick="toggleTheme()" class="w-full flex items-center justify-between px-4 py-2.5 text-slate-500 hover:bg-slate-50 dark:hover:bg-slate-800 rounded-xl transition-all text-sm font-medium">
-                <span id="themeText">Dark Mode</span>
-                <i id="themeIcon" data-lucide="moon" class="w-4 h-4"></i>
-            </button>
-            
-            <a href="../../scripts/logout.php" class="flex items-center gap-3 px-4 py-2.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-xl transition-all text-sm font-medium mt-1">
-                <i data-lucide="log-out" class="w-4 h-4"></i> Logout
-            </a>
+            <div class="grid grid-cols-2 gap-2">
+                <button onclick="toggleTheme()" class="flex items-center justify-center p-3 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition-all text-slate-500">
+                    <i id="themeIcon" data-lucide="moon" class="w-4 h-4"></i>
+                </button>
+                <a href="../../scripts/logout.php" class="flex items-center justify-center p-3 bg-rose-50 dark:bg-rose-900/20 text-rose-500 hover:bg-rose-100 rounded-xl transition-all">
+                    <i data-lucide="log-out" class="w-4 h-4"></i>
+                </a>
+            </div>
         </div>
     </aside>
 
-    <main class="flex-grow">
-        <div id="content-area" class="p-6 lg:p-10 min-h-screen">
-            <div class="max-w-4xl">
-                <h1 class="text-4xl font-extrabold tracking-tight mb-2">System Ready, <?php echo htmlspecialchars(explode(' ', $user['name'])[0]); ?>.</h1>
-                <p class="text-slate-500 dark:text-slate-400 text-lg mb-10">You have <span class="text-indigo-600 font-bold"><?php echo $my_active_bugs; ?> tickets</span> requiring immediate action.</p>
-
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <button data-page="assigned-tickets" class="nav-link text-left p-8 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-[2rem] hover:shadow-xl hover:border-indigo-500 transition-all group">
-                        <div class="w-12 h-12 bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 rounded-2xl flex items-center justify-center mb-6 group-hover:bg-indigo-600 group-hover:text-white transition-all">
-                            <i data-lucide="play-circle"></i>
-                        </div>
-                        <h3 class="text-xl font-bold mb-2">Start Working</h3>
-                        <p class="text-slate-500 text-sm italic">Jump into your assigned tasks and update progress.</p>
-                    </button>
-
-                    <button data-page="view-tickets" class="nav-link text-left p-8 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-[2rem] hover:shadow-xl hover:border-indigo-500 transition-all group">
-                        <div class="w-12 h-12 bg-slate-50 dark:bg-slate-800 text-slate-600 rounded-2xl flex items-center justify-center mb-6 group-hover:bg-slate-800 group-hover:text-white transition-all">
-                            <i data-lucide="search"></i>
-                        </div>
-                        <h3 class="text-xl font-bold mb-2">Browse Backlog</h3>
-                        <p class="text-slate-500 text-sm italic">View all system reports and grab unassigned bugs.</p>
-                    </button>
+    <main class="flex-grow flex flex-col min-w-0">
+        <div id="content-area" class="p-6 lg:p-12 transition-all duration-300">
+            <div class="flex items-center justify-center min-h-[60vh]">
+                <div class="text-center">
+                    <div class="w-12 h-12 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+                    <p class="font-black text-[10px] uppercase tracking-[0.3em] text-slate-400">Initializing Terminal</p>
                 </div>
             </div>
         </div>
     </main>
 
     <script>
-    // --- 🚀 Global AJAX Page Loader ---
-    // Moved outside document.ready so onclick attributes can find it
-    function loadPage(page) {
+    // --- 🚀 Enhanced AJAX Page Loader ---
+    // Added support for 'params' to fix the Ticket ID issue
+    function loadPage(page, params = "") {
         const contentArea = $("#content-area");
-        contentArea.addClass("loading").css("opacity", "0.5");
+        contentArea.css("opacity", "0.4");
         
-        // Transform 'page-name&id=1' into 'page-name.php?id=1'
-        let url = page;
-        if (page.includes('&')) {
-            let parts = page.split('&');
-            url = parts[0] + ".php?" + parts.slice(1).join('&');
-        } else {
-            url = page + ".php";
+        let url = page + ".php";
+        if (params) {
+            url += "?" + params;
         }
 
         $.ajax({
             url: url,
             method: "GET",
+            cache: false,
             success: function(data) {
-                contentArea.html(data).removeClass("loading").css("opacity", "1");
-                lucide.createIcons();
+                contentArea.html(data).css("opacity", "1");
+                if (window.lucide) lucide.createIcons();
                 
-                // Update Sidebar UI: Active State
+                // Update Sidebar Active Class
                 $(".nav-link").removeClass("nav-active");
-                // Match the base page name (before the '&')
-                const basePage = page.split('&')[0];
-                $(`.nav-link[data-page='${basePage}']`).addClass("nav-active");
+                $(`.nav-link[data-page='${page}']`).addClass("nav-active");
+                
+                localStorage.setItem('last_dev_page', page);
             },
-            error: function() {
-                contentArea.html(`
+            error: function(xhr) {
+                contentArea.css("opacity", "1").html(`
                     <div class="text-center py-20">
-                        <i data-lucide="alert-triangle" class="w-12 h-12 text-red-500 mx-auto mb-4"></i>
-                        <h2 class="text-xl font-bold">Module Not Found</h2>
-                        <p class="text-slate-500 italic">Expected: ${url}</p>
+                        <h2 class="text-xl font-bold text-rose-500">Module Error (404)</h2>
+                        <p class="text-slate-500 mt-2">Target: ${url}</p>
+                        <button onclick="loadPage('dashboard_home')" class="mt-4 text-indigo-600 font-bold underline">Go Back</button>
                     </div>
-                `).removeClass("loading").css("opacity", "1");
-                lucide.createIcons();
+                `);
             }
         });
     }
 
     $(document).ready(function() {
-        // 1. Initial Load: Load the home screen immediately
-        loadPage('dashboard_home');
-
-        // 2. Sidebar Navigation Handler
-        $(".nav-link").on('click', function(e) {
-            e.preventDefault();
-            const page = $(this).data("page");
-            if(page) loadPage(page);
-        });
-
+        const lastPage = localStorage.getItem('last_dev_page') || 'dashboard_home';
+        loadPage(lastPage);
         lucide.createIcons();
     });
 
-    // --- 🌙 Dark Mode Support ---
     function setTheme(theme) {
         const html = document.documentElement;
-        const themeText = document.getElementById("themeText");
-        const themeIcon = document.getElementById("themeIcon");
-
         if (theme === "dark") {
             html.classList.add("dark");
-            if(themeText) themeText.textContent = "Light Mode";
-            if(themeIcon) themeIcon.setAttribute("data-lucide", "sun");
         } else {
             html.classList.remove("dark");
-            if(themeText) themeText.textContent = "Dark Mode";
-            if(themeIcon) themeIcon.setAttribute("data-lucide", "moon");
         }
         localStorage.setItem("theme", theme);
         if(window.lucide) lucide.createIcons(); 
@@ -205,8 +197,7 @@ $my_active_bugs = $stmt_count->get_result()->fetch_assoc()['count'];
     }
 
     (function () {
-        const savedTheme = localStorage.getItem("theme") || "light";
-        setTheme(savedTheme);
+        setTheme(localStorage.getItem("theme") || "light");
     })();
 </script>
 </body>
