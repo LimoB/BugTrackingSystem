@@ -2,9 +2,10 @@
 session_start();
 include('../../../config/config.php');
 
-// ✅ Admin Security Guard
+// 🛡️ Security Guard
 if (!isset($_SESSION['role']) || strtolower($_SESSION['role']) !== 'admin') {
-    die("<div class='p-6 text-red-500 font-bold text-center'>Unauthorized Access</div>");
+    http_response_code(403);
+    die("<div class='p-6 text-rose-500 font-bold text-center uppercase tracking-widest'>Unauthorized Access</div>");
 }
 
 if (isset($_GET['user_id'])) {
@@ -42,7 +43,7 @@ if (isset($_GET['user_id'])) {
         <div class="animate-fade-in">
             <div class="flex items-center gap-6 mb-8 pb-6 border-b border-slate-100 dark:border-slate-800">
                 <div class="relative">
-                    <div class="w-24 h-24 rounded-[2.5rem] bg-gradient-to-br from-slate-800 to-slate-900 dark:from-emerald-500 dark:to-teal-600 flex items-center justify-center text-white text-4xl font-black shadow-2xl shadow-slate-200 dark:shadow-none">
+                    <div class="w-24 h-24 rounded-[2.5rem] bg-indigo-600 dark:bg-indigo-500 flex items-center justify-center text-white text-4xl font-black shadow-2xl shadow-indigo-100 dark:shadow-none">
                         <?php echo strtoupper(substr($user['name'], 0, 1)); ?>
                     </div>
                     <div class="absolute -bottom-1 -right-1 w-8 h-8 rounded-full bg-white dark:bg-slate-900 flex items-center justify-center shadow-lg border-4 border-white dark:border-slate-900">
@@ -55,7 +56,7 @@ if (isset($_GET['user_id'])) {
                         <?php echo htmlspecialchars($user['name']); ?>
                     </h2>
                     <div class="flex flex-wrap items-center gap-3">
-                        <span class="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest <?php echo $meta['class']; ?> border border-transparent">
+                        <span class="px-3 py-1 rounded-full text-[10px] font-black uppercase tracking-widest <?php echo $meta['class']; ?>">
                             <?php echo htmlspecialchars($user['role']); ?>
                         </span>
                         <span class="text-[10px] font-black text-slate-400 uppercase tracking-widest">
@@ -94,17 +95,15 @@ if (isset($_GET['user_id'])) {
 
                 <div class="space-y-6">
                     <label class="block text-[10px] font-black uppercase text-slate-400 tracking-widest mb-3">Account Lifecycle</label>
-                    <div class="bg-indigo-600 rounded-[2rem] p-6 text-white shadow-xl shadow-indigo-100 dark:shadow-none">
+                    <div class="bg-slate-900 dark:bg-indigo-900/20 rounded-[2rem] p-6 text-white dark:text-indigo-100 border border-transparent dark:border-indigo-500/20">
                         <div class="space-y-4">
-                            <div class="flex justify-between items-center border-b border-white/10 pb-3">
-                                <span class="text-[10px] font-black uppercase tracking-tighter text-indigo-200">Registration</span>
+                            <div class="flex justify-between items-center border-b border-white/10 dark:border-indigo-500/10 pb-3">
+                                <span class="text-[10px] font-black uppercase tracking-tighter opacity-60">Registration</span>
                                 <span class="text-xs font-bold"><?php echo date('M d, Y', strtotime($user['created_at'])); ?></span>
                             </div>
                             <div class="flex justify-between items-center">
-                                <span class="text-[10px] font-black uppercase tracking-tighter text-indigo-200">Last Modified</span>
-                                <span class="text-xs font-bold">
-                                    <?php echo isset($user['updated_at']) ? date('M d, Y H:i', strtotime($user['updated_at'])) : 'Never'; ?>
-                                </span>
+                                <span class="text-[10px] font-black uppercase tracking-tighter opacity-60">Account Status</span>
+                                <span class="text-xs font-bold text-emerald-400">ACTIVE</span>
                             </div>
                         </div>
                     </div>
@@ -112,8 +111,8 @@ if (isset($_GET['user_id'])) {
             </div>
 
             <div class="mt-12 flex flex-col sm:flex-row gap-3">
-                <button onclick="editUser(<?php echo $user['id']; ?>)" class="flex-grow bg-slate-900 dark:bg-white dark:text-slate-900 text-white font-black py-4 rounded-2xl hover:bg-emerald-600 dark:hover:bg-emerald-500 dark:hover:text-white transition-all flex items-center justify-center gap-2 text-xs uppercase tracking-widest shadow-lg shadow-slate-200 dark:shadow-none">
-                    <i data-lucide="edit-3" class="w-4 h-4"></i>
+                <button onclick="editUser(<?php echo $user['id']; ?>)" class="flex-grow bg-slate-900 dark:bg-white dark:text-slate-900 text-white font-black py-4 rounded-2xl hover:bg-indigo-600 dark:hover:bg-indigo-500 dark:hover:text-white transition-all flex items-center justify-center gap-2 text-xs uppercase tracking-widest shadow-xl shadow-slate-200 dark:shadow-none">
+                    <i data-lucide="shield-check" class="w-4 h-4"></i>
                     Modify Permissions
                 </button>
                 <button onclick="closeUserModal()" class="px-10 py-4 bg-slate-100 dark:bg-slate-800 text-slate-500 font-bold rounded-2xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-all text-xs uppercase tracking-widest">
@@ -127,7 +126,8 @@ if (isset($_GET['user_id'])) {
         </script>
 <?php
     } else {
-        echo "<div class='p-12 text-center text-slate-400 font-bold italic'>Identity record not found in central directory.</div>";
+        echo "<div class='p-12 text-center text-slate-400 font-bold italic uppercase tracking-widest'>Identity record missing from central registry.</div>";
     }
 }
+$stmt->close();
 ?>

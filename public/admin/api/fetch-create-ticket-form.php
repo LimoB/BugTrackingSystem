@@ -78,27 +78,41 @@ $projects = mysqli_query($connection, $project_query);
 <script>
     lucide.createIcons();
 
-    $('#createTicketForm').on('submit', function(e) {
+    $('#createTicketForm').off('submit').on('submit', function(e) {
         e.preventDefault();
-        const btn = $(this).find('button[type="submit"]');
+        const form = $(this);
+        const btn = form.find('button[type="submit"]');
+        
         btn.prop('disabled', true).html('<i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Processing...');
         lucide.createIcons();
 
         $.ajax({
-            url: 'create-ticket-action.php',
+            url: './actions/create-ticket-action.php',
             method: 'POST',
-            data: $(this).serialize(),
+            data: form.serialize(),
             dataType: 'json',
             success: function(res) {
                 if(res.success) {
-                    Swal.fire('Deployed!', res.message, 'success');
-                    loadPage('manage-tickets');
-                    closeUserModal();
+                    Swal.fire({ icon: 'success', title: 'Deployed!', text: res.message, timer: 2000, showConfirmButton: false });
+                    if(typeof loadPage === 'function') loadPage('manage-tickets');
+                    if(typeof closeUserModal === 'function') closeUserModal();
+                } else {
+                    Swal.fire('Error', res.error || 'Unknown error', 'error');
+                    btn.prop('disabled', false).html('<i data-lucide="send" class="w-4 h-4"></i> Deploy Ticket');
+                    lucide.createIcons();
                 }
             },
             error: function(xhr) {
-                const err = JSON.parse(xhr.responseText);
-                Swal.fire('Deployment Failed', err.error, 'error');
+                let errorMsg = "Critical failure: Ticket deployment aborted.";
+                try {
+                    const res = JSON.parse(xhr.responseText);
+                    errorMsg = res.error || errorMsg;
+                } catch(e) {
+                    // This handles the 500 HTML error pages
+                    errorMsg = "Server Error (500): Check if the 'priority' column exists in your database.";
+                }
+                
+                Swal.fire('Deployment Failed', errorMsg, 'error');
                 btn.prop('disabled', false).html('<i data-lucide="send" class="w-4 h-4"></i> Deploy Ticket');
                 lucide.createIcons();
             }

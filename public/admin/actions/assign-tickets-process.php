@@ -1,54 +1,88 @@
 <?php
+/**
+ * File: actions/assign-tickets-process.php
+ * Purpose: Handles ticket assignment and logs the activity.
+ */
+ob_start(); 
 session_start();
 header('Content-Type: application/json');
-include('../../../config/config.php');
 
-// 1. 🛡️ Admin Security Guard
+require_once('../../../config/config.php');
+
+// 1. 🛡️ Security Guard
 if (!isset($_SESSION['role']) || strtolower($_SESSION['role']) !== 'admin') {
+    ob_clean();
     http_response_code(403);
-    echo json_encode(['error' => 'Security Violation: Unauthorized assignment attempt.']);
+    echo json_encode(['success' => false, 'error' => 'Unauthorized Access']);
     exit();
 }
 
-// 2. 🔍 Input Extraction
-// Supporting both your old naming convention and the new AJAX 'assignedTo' key
-$ticket_id    = intval($_POST['ticketId'] ?? $_POST['assign_ticket'] ?? 0);
-$developer_id = intval($_POST['assignedTo'] ?? $_POST['developer_' . $ticket_id] ?? 0);
+// 2. 🔍 Data Extraction
+$ticketId   = isset($_POST['ticketId']) ? (int)$_POST['ticketId'] : 0;
+$assignedTo = isset($_POST['assignedTo']) ? (int)$_POST['assignedTo'] : 0;
+$adminId    = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : 0;
 
-if ($ticket_id === 0 || $developer_id === 0) {
-    echo json_encode(['error' => 'Data Missing: Please select a valid Developer and Ticket.']);
+// 3. 🚦 Validation
+if ($ticketId <= 0 || $assignedTo <= 0) {
+    ob_clean();
+    echo json_encode(['success' => false, 'error' => 'Invalid Ticket or Developer selection.']);
     exit();
 }
 
-// 3. 🚀 Atomic Assignment Update
-$update_sql = "UPDATE Tickets SET assigned_to = ?, updated_at = NOW() WHERE id = ?";
-$stmt = mysqli_prepare($connection, $update_sql);
+if ($adminId === 0) {
+    ob_clean();
+    echo json_encode(['success' => false, 'error' => 'Session Error: Admin ID not found.']);
+    exit();
+}
+
+// 4. 🚀 Execute Ticket Update
+// Update assigned_to, assigned_by, and set status to 'in-progress'
+$query = "UPDATE Tickets 
+          SET assigned_to = ?, 
+              assigned_by = ?, 
+              status = 'in-progress' 
+          WHERE id = ?";
+
+$stmt = mysqli_prepare($connection, $query);
 
 if ($stmt) {
-    mysqli_stmt_bind_param($stmt, 'ii', $developer_id, $ticket_id);
+    mysqli_stmt_bind_param($stmt, 'iii', $assignedTo, $adminId, $ticketId);
     
     if (mysqli_stmt_execute($stmt)) {
-        // Fetch Developer Name for a personalized success message
-        $name_query = "SELECT name FROM Users WHERE id = ?";
-        $name_stmt = mysqli_prepare($connection, $name_query);
-        mysqli_stmt_bind_param($name_stmt, 'i', $developer_id);
-        mysqli_stmt_execute($name_stmt);
-        mysqli_stmt_bind_result($name_stmt, $developer_name);
-        mysqli_stmt_fetch($name_stmt);
-        mysqli_stmt_close($name_stmt);
+        
+        // --- 📝 START ACTIVITY LOGGING ---
+        // Fetch names for a readable log entry
+        $dev_res = mysqli_query($connection, "SELECT name FROM Users WHERE id = $assignedTo LIMIT 1");
+        $dev_row = mysqli_fetch_assoc($dev_res);
+        $dev_name = $dev_row['name'] ?? 'Unknown Dev';
 
+        $log_desc = "Ticket #$ticketId was assigned to $dev_name by Admin (ID: $adminId)";
+        $log_query = "INSERT INTO activity_log (user_id, action_type, description) VALUES (?, 'TICKET_ASSIGNED', ?)";
+        
+        $log_stmt = mysqli_prepare($connection, $log_query);
+        if ($log_stmt) {
+            mysqli_stmt_bind_param($log_stmt, 'is', $adminId, $log_desc);
+            mysqli_stmt_execute($log_stmt);
+            mysqli_stmt_close($log_stmt);
+        }
+        // --- 📝 END ACTIVITY LOGGING ---
+
+        ob_clean();
         echo json_encode([
             'success' => true,
-            'message' => "Ticket #$ticket_id successfully routed to $developer_name."
+            'message' => "Ticket #$ticketId successfully deployed to $dev_name"
         ]);
     } else {
-        http_response_code(500);
-        echo json_encode(['error' => 'Database Sync Failure: ' . mysqli_stmt_error($stmt)]);
+        ob_clean();
+        echo json_encode(['success' => false, 'error' => 'Database update failed: ' . mysqli_error($connection)]);
     }
     mysqli_stmt_close($stmt);
 } else {
-    http_response_code(500);
-    echo json_encode(['error' => 'System Failure: Failed to prepare assignment query.']);
+    ob_clean();
+    echo json_encode(['success' => false, 'error' => 'SQL Preparation failed: ' . mysqli_error($connection)]);
 }
 
 mysqli_close($connection);
+ob_end_flush();
+exit();
+?>

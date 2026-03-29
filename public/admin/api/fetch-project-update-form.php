@@ -72,7 +72,7 @@ if (isset($_GET['project_id'])) {
                 const formData = $(this).serialize();
                 
                 $.ajax({
-                    url: 'update-project-process.php', // Ensure this file returns JSON
+                    url: './actions/update-project-action.php', // Ensure this file returns JSON
                     method: 'POST',
                     data: formData,
                     dataType: 'json',
