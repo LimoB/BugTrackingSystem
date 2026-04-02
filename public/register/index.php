@@ -1,7 +1,7 @@
 <?php
 /**
  * File: public/register/index.php
- * Purpose: Easy user signup with secure password hashing.
+ * Purpose: Secure registration with data persistence (form doesn't clear on error).
  */
 session_start();
 include('../../config/config.php');
@@ -10,15 +10,21 @@ $base_url = "/php-bugtracking-system/";
 $message = "";
 $message_type = ""; 
 
-// 1. Check if user clicked the Register button
+// Variables to hold form data so it doesn't clear
+$name_val = "";
+$email_val = "";
+$role_val = "user";
+
 if (isset($_POST['register'])) {
-    $name     = trim($_POST['name']);
-    $email    = trim($_POST['email']);
+    // Capture data to echo back into the form
+    $name_val = trim($_POST['name']);
+    $email_val = trim($_POST['email']);
+    $role_val = $_POST['role'];
+    
     $password = $_POST['password'];
     $confirm  = $_POST['confirm_password'];
-    $role     = $_POST['role'];
     
-    // 2. Simple Checks
+    // 1. Validation Checks
     if ($password !== $confirm) {
         $message = "Passwords do not match!";
         $message_type = "error";
@@ -26,12 +32,12 @@ if (isset($_POST['register'])) {
         $message = "Password is too short (min 6 chars).";
         $message_type = "error";
     } else {
-        // 3. Make Password Secure
+        // 2. Security: Hash Password
         $hashedPassword = password_hash($password, PASSWORD_DEFAULT);
         
-        // 4. Check if email already exists
+        // 3. Check for existing email
         $check = $connection->prepare("SELECT id FROM Users WHERE email = ?");
-        $check->bind_param("s", $email);
+        $check->bind_param("s", $email_val);
         $check->execute();
         $check->store_result();
         
@@ -39,13 +45,15 @@ if (isset($_POST['register'])) {
             $message = "This email is already in our system.";
             $message_type = "error";
         } else {
-            // 5. Save to Database
+            // 4. Insert into Database
             $stmt = $connection->prepare("INSERT INTO Users (name, email, password, role) VALUES (?, ?, ?, ?)");
-            $stmt->bind_param("ssss", $name, $email, $hashedPassword, $role);
+            $stmt->bind_param("ssss", $name_val, $email_val, $hashedPassword, $role_val);
             
             if ($stmt->execute()) {
                 $message = "Account created! Moving to login...";
                 $message_type = "success";
+                // Clear fields only on success
+                $name_val = $email_val = "";
             } else {
                 $message = "Something went wrong. Try again.";
                 $message_type = "error";
@@ -108,7 +116,7 @@ if (isset($_POST['register'])) {
                     <label class="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-1">Full Name</label>
                     <div class="relative">
                         <i data-lucide="user" class="absolute left-5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"></i>
-                        <input type="text" name="name" placeholder="Boaz Limo" required 
+                        <input type="text" name="name" value="<?php echo htmlspecialchars($name_val); ?>" placeholder="Boaz Limo" required 
                             class="w-full pl-12 pr-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-4 focus:ring-blue-50 focus:border-blue-600 focus:bg-white outline-none font-bold text-sm transition-all">
                     </div>
                 </div>
@@ -117,7 +125,7 @@ if (isset($_POST['register'])) {
                     <label class="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-1">Email Address</label>
                     <div class="relative">
                         <i data-lucide="mail" class="absolute left-5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400"></i>
-                        <input type="email" name="email" placeholder="boaz@example.com" required 
+                        <input type="email" name="email" value="<?php echo htmlspecialchars($email_val); ?>" placeholder="boaz@example.com" required 
                             class="w-full pl-12 pr-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-4 focus:ring-blue-50 focus:border-blue-600 focus:bg-white outline-none font-bold text-sm transition-all">
                     </div>
                 </div>
@@ -138,9 +146,9 @@ if (isset($_POST['register'])) {
                     <label class="text-[10px] font-black uppercase text-slate-400 tracking-widest ml-1">Your Role</label>
                     <div class="relative">
                         <select name="role" class="w-full px-6 py-4 bg-slate-50 border border-slate-100 rounded-2xl focus:ring-4 focus:ring-blue-50 focus:border-blue-600 outline-none appearance-none font-bold text-sm text-slate-700 cursor-pointer">
-                            <option value="user">User / Reporter</option>
-                            <option value="developer">Developer</option>
-                            <option value="admin">Administrator</option>
+                            <option value="user" <?php echo ($role_val == 'user') ? 'selected' : ''; ?>>User / Reporter</option>
+                            <option value="developer" <?php echo ($role_val == 'developer') ? 'selected' : ''; ?>>Developer</option>
+                            <option value="admin" <?php echo ($role_val == 'admin') ? 'selected' : ''; ?>>Administrator</option>
                         </select>
                         <i data-lucide="chevron-down" class="absolute right-5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none"></i>
                     </div>
@@ -158,10 +166,8 @@ if (isset($_POST['register'])) {
 </main>
 
 <script>
-    // Initialize Icons
     lucide.createIcons();
 
-    // Setup Alerts
     const Toast = Swal.mixin({
         toast: true,
         position: 'top-end',
@@ -170,14 +176,12 @@ if (isset($_POST['register'])) {
         timerProgressBar: true
     });
 
-    // If PHP sends a message, show it here
     <?php if (!empty($message)) : ?>
         Toast.fire({
             icon: '<?php echo $message_type; ?>',
-            title: '<?php echo $message; ?>'
+            title: '<?php echo addslashes($message); ?>'
         }).then(() => {
             <?php if ($message_type === "success") : ?>
-                // Send user to login page after success
                 window.location.href = "../login/index.php";
             <?php endif; ?>
         });

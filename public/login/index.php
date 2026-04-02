@@ -1,7 +1,7 @@
 <?php
 /**
  * File: public/login/index.php
- * Purpose: Secure login page with automatic role redirection.
+ * Purpose: Secure login with email persistence on error.
  */
 ob_start();
 session_start();
@@ -11,36 +11,36 @@ include('../../config/config.php');
 
 $base_url = "/php-bugtracking-system/";
 $error = "";
+$email_val = ""; // Variable to hold the email if login fails
 
-// If user is already logged in, send them to their dashboard automatically
+// If user is already logged in, send them straight to their dashboard
 if (isset($_SESSION['role'])) {
     header("Location: ../" . $_SESSION['role'] . "/index.php");
     exit();
 }
 
 if (isset($_POST['login'])) {
-    $email = trim($_POST['email']);
+    $email_val = trim($_POST['email']);
     $password = $_POST['password']; 
 
-    // 2. Find the user safely using their email
+    // 2. Search for the user safely
     $stmt = $connection->prepare("SELECT id, name, password, role FROM Users WHERE email = ? LIMIT 1");
-    $stmt->bind_param("s", $email);
+    $stmt->bind_param("s", $email_val);
     $stmt->execute();
     $result = $stmt->get_result();
 
     if ($user = $result->fetch_assoc()) {
-        // 3. Check if the password is correct
+        // 3. Check the password
         if (password_verify($password, $user['password'])) {
             
-            // Refresh session for better security
+            // Success: Secure the session
             session_regenerate_id(true);
 
-            // Store user info in the session
             $_SESSION['user_id'] = $user['id'];
             $_SESSION['role'] = strtolower($user['role']); 
             $_SESSION['name'] = $user['name'];
 
-            // 4. Send user to their specific dashboard (admin, developer, or user)
+            // 4. Redirect to the correct folder (admin, developer, or user)
             ob_clean();
             header("Location: ../" . $_SESSION['role'] . "/index.php");
             exit();
@@ -99,7 +99,7 @@ if (isset($_POST['login'])) {
             
             <header class="mb-10 text-center md:text-left">
                 <h2 class="text-4xl font-black tracking-tighter mb-3 leading-none">Welcome Back</h2>
-                <p class="text-slate-500 font-medium leading-relaxed">Login to your dashboard to manage your projects.</p>
+                <p class="text-slate-500 font-medium leading-relaxed">Sign in to manage your error reports and projects.</p>
             </header>
 
             <form action="" method="POST" class="space-y-6">
@@ -107,7 +107,7 @@ if (isset($_POST['login'])) {
                     <label class="block text-[10px] font-black uppercase text-slate-400 tracking-widest ml-1">Email Address</label>
                     <div class="relative group">
                         <i data-lucide="mail" class="absolute left-5 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-400 group-focus-within:text-blue-600 transition-colors"></i>
-                        <input type="email" name="email" placeholder="name@example.com" required 
+                        <input type="email" name="email" value="<?php echo htmlspecialchars($email_val); ?>" placeholder="name@example.com" required 
                             class="w-full pl-14 pr-6 py-5 bg-slate-50 border border-slate-100 rounded-[2rem] focus:ring-4 focus:ring-blue-50 focus:border-blue-600 outline-none text-sm font-bold transition-all">
                     </div>
                 </div>
@@ -132,7 +132,7 @@ if (isset($_POST['login'])) {
 
             <footer class="mt-12 pt-8 border-t border-slate-100 text-center">
                 <p class="text-[11px] font-bold text-slate-400 uppercase tracking-widest">
-                    New here? <a href="../register/index.php" class="text-blue-600 hover:underline">Create an account</a>
+                    New to Zappr? <a href="../register/index.php" class="text-blue-600 hover:underline">Join the platform</a>
                 </p>
             </footer>
         </div>
@@ -140,10 +140,8 @@ if (isset($_POST['login'])) {
 </main>
 
 <script>
-    // Load Icons
     lucide.createIcons();
 
-    // Show Error Alerts
     const Toast = Swal.mixin({
         toast: true,
         position: 'top-end',
@@ -155,7 +153,7 @@ if (isset($_POST['login'])) {
     <?php if (!empty($error)) : ?>
         Toast.fire({
             icon: 'error',
-            title: '<?php echo $error; ?>'
+            title: '<?php echo addslashes($error); ?>'
         });
     <?php endif; ?>
 </script>
