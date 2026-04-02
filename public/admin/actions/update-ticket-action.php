@@ -1,7 +1,8 @@
 <?php
 /**
  * File: admin/actions/update-ticket-action.php
- * Purpose: Atomic synchronization of ticket state and priority.
+ * Purpose: Atomic synchronization of ticket state, priority, assignment, and category.
+ * Verified with MariaDB Schema: [id, status, priority, assigned_to, assigned_by, category_id]
  */
 ob_start(); 
 session_start();
@@ -17,74 +18,90 @@ if (!isset($_SESSION['role']) || strtolower($_SESSION['role']) !== 'admin') {
     exit();
 }
 
-// 2. 🔍 Input Extraction & Sanitization
+// 2. 🔍 Input Extraction & Mapping
 $ticketId       = isset($_POST['ticketId']) ? (int)$_POST['ticketId'] : 0;
 $ticketStatus   = isset($_POST['ticketStatus']) ? strtolower(trim($_POST['ticketStatus'])) : '';
 $ticketPriority = isset($_POST['ticketPriority']) ? strtolower(trim($_POST['ticketPriority'])) : '';
+$assignedTo     = !empty($_POST['assignedTo']) ? (int)$_POST['assignedTo'] : null;
+$categoryId     = !empty($_POST['categoryId']) ? (int)$_POST['categoryId'] : null;
 
-// Map the admin ID based on your Users table login
-$adminId = $_SESSION['id'] ?? $_SESSION['user_id'] ?? 0;
+// Map current logged-in Admin to assigned_by
+$adminId = $_SESSION['user_id'] ?? $_SESSION['id'] ?? 0;
 
-// 3. 🚦 Strict Validation (Prevents "Data Truncated" errors)
-// Based on your DESCRIBE Tickets status; output
+// 3. 🚦 Integrity Validation
 $validStatuses = ['open', 'in-progress', 'resolved', 'closed', 'on-hold'];
 if (!in_array($ticketStatus, $validStatuses)) {
     ob_clean();
-    echo json_encode(['success' => false, 'error' => "Kernel Rejection: '$ticketStatus' is not a recognized ENUM state."]);
+    echo json_encode(['success' => false, 'error' => "Rejection: '$ticketStatus' is not a valid state."]);
     exit();
 }
 
 if ($ticketId <= 0) {
     ob_clean();
-    echo json_encode(['success' => false, 'error' => 'Invalid Reference: Ticket ID is required.']);
+    echo json_encode(['success' => false, 'error' => 'Reference Error: Valid Ticket ID required.']);
     exit();
 }
 
-// 4. 🚀 Execute Atomic Update
+// 4. 🚀 Database Operations
 try {
-    // Matches your Tickets table: status, priority, id
-    $query = "UPDATE Tickets SET status = ?, priority = ? WHERE id = ? LIMIT 1";
+    // Constructing the update query dynamically to handle NULL values for category and assignment
+    $query = "UPDATE Tickets SET 
+                status = ?, 
+                priority = ?, 
+                assigned_to = ?, 
+                assigned_by = ?, 
+                category_id = ? 
+              WHERE id = ? LIMIT 1";
+
     $stmt = $connection->prepare($query);
 
     if (!$stmt) {
-        throw new Exception("SQL Prepare Failure: " . $connection->error);
+        throw new Exception("SQL Preparation Error: " . $connection->error);
     }
 
-    $stmt->bind_param('ssi', $ticketStatus, $ticketPriority, $ticketId);
+    // Bind parameters: 'ssiiii' (string, string, int, int, int, int)
+    // Note: PHP mysqli bind_param handles null values correctly as long as the variable is null
+    $stmt->bind_param('ssiiii', 
+        $ticketStatus, 
+        $ticketPriority, 
+        $assignedTo, 
+        $adminId, 
+        $categoryId, 
+        $ticketId
+    );
 
     if ($stmt->execute()) {
         
-        // --- 📝 Activity Logging (Synchronized with your MariaDB schema) ---
-        // Your table columns: user_id, action_type, description, ticket_id
-        $log_type = "TICKET_OVERRIDE";
-        $log_desc = "Admin #$adminId updated Ticket #$ticketId to $ticketStatus ($ticketPriority)";
+        // --- 📝 Audit Trail / Activity Log ---
+        $log_type = "TICKET_UPDATE";
+        $assignee_info = $assignedTo ? "Dev #$assignedTo" : "Unassigned";
+        $cat_info = $categoryId ? "Category #$categoryId" : "Uncategorized";
+        
+        $log_desc = "Admin #$adminId synced Ticket #$ticketId: [$ticketStatus | $ticketPriority] Assigned to: $assignee_info, Class: $cat_info";
         
         $log_query = "INSERT INTO activity_log (user_id, action_type, description, ticket_id, created_at) VALUES (?, ?, ?, ?, NOW())";
         
         if ($log_stmt = $connection->prepare($log_query)) {
-            // "issi" = int, string, string, int
             $log_stmt->bind_param("issi", $adminId, $log_type, $log_desc, $ticketId);
             $log_stmt->execute();
             $log_stmt->close();
         }
 
-        // 5. 📡 Return Success Payload
+        // 5. 📡 Payload Response
         ob_clean();
         echo json_encode([
             'success' => true,
-            'message' => "Registry Synchronized: Ticket #$ticketId updated to $ticketStatus."
+            'message' => "Registry Synchronized: Ticket #$ticketId updated and classified."
         ]);
     } else {
-        throw new Exception("Execution Failure: " . $stmt->error);
+        throw new Exception("Execution Failed: " . $stmt->error);
     }
     
     $stmt->close();
 
 } catch (Exception $e) {
     ob_clean();
-    http_response_code(500);
-    // This will now show the exact MariaDB error if one occurs
-    echo json_encode(['success' => false, 'error' => 'Database Sync Error: ' . $e->getMessage()]);
+    echo json_encode(['success' => false, 'error' => 'Kernel Sync Error: ' . $e->getMessage()]);
 }
 
 $connection->close();
