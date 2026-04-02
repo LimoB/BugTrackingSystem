@@ -1,93 +1,126 @@
 <?php
+/**
+ * File: admin/api/fetch-user-details.php
+ * Purpose: Deep-dive analytical view of a specific user identity.
+ */
 session_start();
-include('../../config/config.php');
+require_once('../../../config/config.php');
 
-// ✅ Admin Security Guard
+// 1. 🛡️ Kernel Security Guard
 if (!isset($_SESSION['role']) || strtolower($_SESSION['role']) !== 'admin') {
-    die("<div class='p-6 text-red-500 font-bold'>Unauthorized Access</div>");
+    http_response_code(403);
+    die("<div class='p-12 text-center'><i data-lucide='shield-alert' class='w-12 h-12 text-rose-500 mx-auto mb-4'></i><p class='text-[10px] font-black uppercase text-slate-400 tracking-[0.3em]'>Access Denied: Admin Clearance Required</p></div>");
 }
 
-if (isset($_GET['user_id']) && is_numeric($_GET['user_id'])) {
-    $userId = intval($_GET['user_id']);
+$userId = isset($_GET['user_id']) ? intval($_GET['user_id']) : 0;
 
-    $query = "SELECT id, name, email, role, created_at FROM Users WHERE id = ?";
-    $stmt = mysqli_prepare($connection, $query);
+if ($userId > 0) {
+    // 🔍 Extract target profile from registry
+    $query = "SELECT id, name, email, role, created_at FROM Users WHERE id = ? LIMIT 1";
+    $stmt = $connection->prepare($query);
 
     if ($stmt) {
-        mysqli_stmt_bind_param($stmt, 'i', $userId);
-        mysqli_stmt_execute($stmt);
-        $result = mysqli_stmt_get_result($stmt);
-        $user = mysqli_fetch_assoc($result);
+        $stmt->bind_param('i', $userId);
+        $stmt->execute();
+        $user = $stmt->get_result()->fetch_assoc();
 
         if ($user) {
-            // Define Role Badge Colors
-            $role_style = [
-                'admin' => 'bg-rose-100 text-rose-700 border-rose-200',
-                'developer' => 'bg-indigo-100 text-indigo-700 border-indigo-200',
-                'user' => 'bg-emerald-100 text-emerald-700 border-emerald-200'
-            ][strtolower($user['role'])] ?? 'bg-slate-100 text-slate-700 border-slate-200';
+            // Strategic Role Styling Logic
+            $role_map = [
+                'admin'     => ['bg' => 'bg-rose-50', 'text' => 'text-rose-600', 'border' => 'border-rose-100', 'icon' => 'shield-check'],
+                'developer' => ['bg' => 'bg-indigo-50', 'text' => 'text-indigo-600', 'border' => 'border-indigo-100', 'icon' => 'code-2'],
+                'user'      => ['bg' => 'bg-emerald-50', 'text' => 'text-emerald-600', 'border' => 'border-emerald-100', 'icon' => 'user']
+            ];
+            $style = $role_map[strtolower($user['role'])] ?? ['bg' => 'bg-slate-50', 'text' => 'text-slate-500', 'border' => 'border-slate-100', 'icon' => 'user-minus'];
 ?>
-            <div class="animate-fade-in">
-                <div class="flex flex-col items-center text-center mb-8 pb-6 border-b border-slate-100 dark:border-slate-800">
-                    <div class="w-20 h-20 rounded-[2rem] bg-gradient-to-br from-slate-100 to-slate-200 dark:from-slate-800 dark:to-slate-700 flex items-center justify-center mb-4 shadow-inner">
-                        <span class="text-3xl font-black text-slate-400">
-                            <?php echo strtoupper(substr($user['name'], 0, 1)); ?>
-                        </span>
+            <div class="p-10 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                <div class="flex flex-col items-center text-center mb-10 pb-10 border-b border-slate-100 dark:border-slate-800">
+                    <div class="relative mb-6">
+                        <div class="w-24 h-24 rounded-[2.5rem] bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-800 dark:to-slate-900 flex items-center justify-center shadow-inner border border-slate-100 dark:border-slate-700">
+                            <span class="text-4xl font-black text-slate-300 dark:text-slate-600 tracking-tighter">
+                                <?php echo strtoupper(substr($user['name'], 0, 1)); ?>
+                            </span>
+                        </div>
+                        <div class="absolute -bottom-2 -right-2 w-10 h-10 rounded-2xl <?php echo $style['bg']; ?> <?php echo $style['border']; ?> border flex items-center justify-center <?php echo $style['text']; ?> shadow-lg">
+                            <i data-lucide="<?php echo $style['icon']; ?>" class="w-5 h-5"></i>
+                        </div>
                     </div>
-                    <h2 class="text-2xl font-black text-slate-900 dark:text-white leading-tight">
+                    
+                    <h2 class="text-3xl font-black text-slate-900 dark:text-white tracking-tighter leading-none mb-2">
                         <?php echo htmlspecialchars($user['name']); ?>
                     </h2>
-                    <div class="mt-2 inline-flex items-center px-3 py-1 rounded-full border text-[10px] font-black uppercase tracking-widest <?php echo $role_style; ?>">
-                        <?php echo $user['role']; ?>
+                    <span class="px-4 py-1.5 rounded-full border text-[9px] font-black uppercase tracking-[0.2em] <?php echo $style['bg']; ?> <?php echo $style['text']; ?> <?php echo $style['border']; ?>">
+                        <?php echo $user['role']; ?> Access Level
+                    </span>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <div class="space-y-2">
+                        <label class="text-[9px] font-black uppercase text-slate-400 tracking-[0.2em] flex items-center gap-2">
+                            <i data-lucide="hash" class="w-3 h-3 text-indigo-500"></i> Registry ID
+                        </label>
+                        <div class="px-4 py-3 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800">
+                            <code class="text-xs font-black text-slate-700 dark:text-slate-300 tracking-widest">
+                                #UID-<?php echo str_pad($user['id'], 5, '0', STR_PAD_LEFT); ?>
+                            </code>
+                        </div>
+                    </div>
+
+                    <div class="space-y-2">
+                        <label class="text-[9px] font-black uppercase text-slate-400 tracking-[0.2em] flex items-center gap-2">
+                            <i data-lucide="mail" class="w-3 h-3 text-indigo-500"></i> Communication
+                        </label>
+                        <div class="px-4 py-3 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800">
+                            <p class="text-xs font-bold text-slate-700 dark:text-slate-300 truncate">
+                                <?php echo htmlspecialchars($user['email']); ?>
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="space-y-2">
+                        <label class="text-[9px] font-black uppercase text-slate-400 tracking-[0.2em] flex items-center gap-2">
+                            <i data-lucide="calendar" class="w-3 h-3 text-indigo-500"></i> Onboarded Since
+                        </label>
+                        <div class="px-4 py-3 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-100 dark:border-slate-800">
+                            <p class="text-xs font-bold text-slate-600 dark:text-slate-400 italic">
+                                <?php echo date('F d, Y', strtotime($user['created_at'] ?? 'now')); ?>
+                            </p>
+                        </div>
+                    </div>
+
+                    <div class="space-y-2">
+                        <label class="text-[9px] font-black uppercase text-slate-400 tracking-[0.2em] block">Security Status</label>
+                        <div class="px-4 py-3 bg-emerald-50/30 dark:bg-emerald-900/10 rounded-2xl border border-emerald-100/50 dark:border-emerald-900/30">
+                            <span class="flex items-center gap-2 text-[10px] font-black text-emerald-600 uppercase tracking-widest">
+                                <span class="relative flex h-2 w-2">
+                                  <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                                  <span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                                </span>
+                                Verified Active
+                            </span>
+                        </div>
                     </div>
                 </div>
 
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div class="space-y-1">
-                        <label class="text-[10px] font-black uppercase text-slate-400 tracking-widest">System Identifier</label>
-                        <p class="font-mono text-sm text-slate-600 dark:text-slate-300">#UID-<?php echo str_pad($user['id'], 5, '0', STR_PAD_LEFT); ?></p>
-                    </div>
-
-                    <div class="space-y-1">
-                        <label class="text-[10px] font-black uppercase text-slate-400 tracking-widest">Primary Contact</label>
-                        <p class="text-sm font-bold text-slate-600 dark:text-slate-300"><?php echo htmlspecialchars($user['email']); ?></p>
-                    </div>
-
-                    <div class="space-y-1">
-                        <label class="text-[10px] font-black uppercase text-slate-400 tracking-widest">Onboarding Date</label>
-                        <p class="text-sm font-medium text-slate-500 italic">
-                            <?php echo date('F d, Y', strtotime($user['created_at'] ?? 'now')); ?>
-                        </p>
-                    </div>
-
-                    <div class="space-y-1 text-right">
-                        <label class="text-[10px] font-black uppercase text-slate-400 tracking-widest block">Account Status</label>
-                        <span class="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-500">
-                            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                            Active Profile
-                        </span>
-                    </div>
-                </div>
-
-                <div class="mt-10 flex gap-3">
-                    <button onclick="editUser(<?php echo $user['id']; ?>)" class="flex-grow flex items-center justify-center gap-2 px-4 py-4 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-indigo-600 dark:hover:bg-indigo-500 transition-all shadow-lg">
+                <div class="mt-12 flex flex-col sm:flex-row gap-4">
+                    <button onclick="editUser(<?php echo $user['id']; ?>)" class="flex-grow flex items-center justify-center gap-3 px-8 py-5 bg-slate-900 dark:bg-indigo-600 text-white rounded-[1.5rem] text-[10px] font-black uppercase tracking-widest hover:bg-indigo-500 transition-all shadow-xl shadow-indigo-600/10 active:scale-95">
                         <i data-lucide="shield-check" class="w-4 h-4"></i>
-                        Modify Access
+                        Override Permissions
                     </button>
-                    <button onclick="closeUserModal()" class="px-8 py-4 bg-slate-100 dark:bg-slate-800 text-slate-500 font-bold rounded-2xl hover:bg-slate-200 transition-all text-xs uppercase tracking-widest">
-                        Dismiss
+                    <button onclick="closeUserModal()" class="px-10 py-5 bg-slate-100 dark:bg-slate-800 text-slate-500 font-black rounded-[1.5rem] hover:bg-slate-200 transition-all text-[10px] uppercase tracking-widest active:scale-95">
+                        Close Registry
                     </button>
                 </div>
             </div>
 <?php
         } else {
-            echo "<div class='p-10 text-center text-slate-400 font-bold italic'>Error: Profile Not Found.</div>";
+            echo "<div class='p-20 text-center'><i data-lucide='database-zap' class='w-12 h-12 text-slate-300 mx-auto mb-4'></i><p class='font-black text-slate-400 uppercase tracking-[0.3em] text-[10px] italic'>Identity Missing from Matrix</p></div>";
         }
-        mysqli_stmt_close($stmt);
+        $stmt->close();
     }
 }
 ?>
 
 <script>
-    lucide.createIcons();
+    if(window.lucide) lucide.createIcons();
 </script>

@@ -1,57 +1,94 @@
 <?php
+/**
+ * File: admin/actions/create-project-action.php
+ * Purpose: Initializes new infrastructure projects within the registry.
+ */
+ob_start();
 session_start();
 header('Content-Type: application/json');
-include('../../../config/config.php');
 
-// 1. 🛡️ Admin Security Guard
+require_once('../../../config/config.php');
+
+// 1. 🛡️ Security Guard: Administrative Clearance
 if (!isset($_SESSION['role']) || strtolower($_SESSION['role']) !== 'admin') {
+    ob_clean();
     http_response_code(403);
-    echo json_encode(['error' => 'Unauthorized: System Admin credentials required.']);
+    echo json_encode(['success' => false, 'error' => 'Security Violation: Administrative clearance required for initialization.']);
     exit();
 }
 
-// 2. 🔍 Data Extraction (No need to escape if using Prepared Statements)
+// 2. 🔍 Data Extraction & Sanitization
 $projectName        = isset($_POST['projectName']) ? trim($_POST['projectName']) : '';
 $projectDescription = isset($_POST['projectDescription']) ? trim($_POST['projectDescription']) : '';
 $projectStatus      = isset($_POST['projectStatus']) ? trim($_POST['projectStatus']) : 'pending';
-$createdBy          = intval($_SESSION['user_id']);
+$adminId            = $_SESSION['user_id'] ?? $_SESSION['id'] ?? 0;
 
 // 3. 🚦 Validation Logic
 $validStatuses = ['pending', 'active', 'completed'];
 
 if (empty($projectName) || empty($projectDescription)) {
-    echo json_encode(['error' => 'Validation Error: Project Name and Description are mandatory.']);
+    ob_clean();
+    echo json_encode(['success' => false, 'error' => 'Validation Error: Project Identity and Strategic Briefing are mandatory.']);
     exit();
 }
 
 if (!in_array($projectStatus, $validStatuses)) {
-    echo json_encode(['error' => 'System Error: Invalid status identifier.']);
-    exit();
+    $projectStatus = 'pending'; // Default to pending if tampered with
 }
 
-// 4. 🚀 Atomic Database Insert
-$query = "INSERT INTO Projects (name, description, status, created_by, created_at) VALUES (?, ?, ?, ?, NOW())";
-$stmt = mysqli_prepare($connection, $query);
+// 4. 🚀 Atomic Database Operation
+try {
+    $connection->begin_transaction();
 
-if ($stmt) {
-    // Mapping: Name(s), Description(s), Status(s), CreatedBy(i)
-    mysqli_stmt_bind_param($stmt, "sssi", $projectName, $projectDescription, $projectStatus, $createdBy);
+    // A. Insert Project Record
+    $query = "INSERT INTO Projects (name, description, status, created_by, created_at) VALUES (?, ?, ?, ?, NOW())";
+    $stmt = $connection->prepare($query);
     
-    if (mysqli_stmt_execute($stmt)) {
-        echo json_encode([
-            'success' => true,
-            'message' => 'New infrastructure project initialized!',
-            'project_id' => mysqli_insert_id($connection)
-        ]);
-    } else {
-        http_response_code(500);
-        echo json_encode(['error' => 'Execution Failure: ' . mysqli_stmt_error($stmt)]);
+    if (!$stmt) {
+        throw new Exception("Engine Preparation Failure: " . $connection->error);
     }
-    mysqli_stmt_close($stmt);
-} else {
+
+    $stmt->bind_param("sssi", $projectName, $projectDescription, $projectStatus, $adminId);
+    
+    if (!$stmt->execute()) {
+        throw new Exception("Execution Failure: " . $stmt->error);
+    }
+
+    $newProjectId = $connection->insert_id;
+    $stmt->close();
+
+    // B. 📝 Audit Trail: Log Project Initialization
+    $logDesc = "Admin #$adminId initialized new Project Node #$newProjectId ($projectName).";
+    $logQuery = "INSERT INTO activity_log (user_id, action_type, description, created_at) VALUES (?, 'PROJECT_CREATE', ?, NOW())";
+    
+    if ($logStmt = $connection->prepare($logQuery)) {
+        $logStmt->bind_param("is", $adminId, $logDesc);
+        $logStmt->execute();
+        $logStmt->close();
+    }
+
+    // 🏆 Success: Commit Transaction
+    $connection->commit();
+
+    ob_clean();
+    echo json_encode([
+        'success'    => true,
+        'message'    => 'New infrastructure project initialized successfully!',
+        'project_id' => $newProjectId,
+        'node_ref'   => "PROJ-" . str_pad($newProjectId, 3, '0', STR_PAD_LEFT)
+    ]);
+
+} catch (Exception $e) {
+    $connection->rollback();
+    ob_clean();
     http_response_code(500);
-    echo json_encode(['error' => 'Preparation Failure: Could not link project to core database.']);
+    echo json_encode([
+        'success' => false, 
+        'error'   => 'System Error: ' . $e->getMessage()
+    ]);
 }
 
-mysqli_close($connection);
-?>
+// 5. Cleanup
+$connection->close();
+ob_end_flush();
+exit();

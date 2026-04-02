@@ -1,61 +1,82 @@
 <?php
+/**
+ * File: admin/actions/delete-user-action.php
+ * Purpose: Secure removal of user identity with work history preservation.
+ */
 session_start();
 header('Content-Type: application/json');
-include('../../../config/config.php');
+require_once('../../../config/config.php');
 
-// 1. 🛡️ Admin Security Guard
+// 1. 🛡️ Kernel Security Guard
 if (!isset($_SESSION['role']) || strtolower($_SESSION['role']) !== 'admin') {
     http_response_code(403);
-    echo json_encode(['error' => 'Security Violation: Administrative clearance required.']);
+    echo json_encode([
+        'success' => false, 
+        'error' => 'Security Violation: Kernel-level admin clearance required.'
+    ]);
     exit();
 }
 
-// 2. 🔍 Validation & Self-Preservation
+// 2. 🔍 Data Extraction & Self-Preservation
 $userId = isset($_POST['userId']) ? intval($_POST['userId']) : 0;
+$currentAdminId = $_SESSION['user_id'] ?? 0;
 
 if ($userId === 0) {
-    echo json_encode(['error' => 'Invalid Request: Target identifier missing.']);
+    echo json_encode(['success' => false, 'error' => 'Invalid Identifier: Target user ID missing.']);
     exit();
 }
 
-if ($userId === intval($_SESSION['user_id'])) {
-    echo json_encode(['error' => 'System Safeguard: You cannot delete your own active session.']);
+if ($userId === (int)$currentAdminId) {
+    echo json_encode(['success' => false, 'error' => 'System Safeguard: You cannot purge your own active session.']);
     exit();
 }
 
-// 3. 🚦 Database Integrity: Unlink Active Tickets
-// We set 'assigned_to' to NULL so the work history remains, but the developer is removed.
-$unlink_sql = "UPDATE Tickets SET assigned_to = NULL WHERE assigned_to = ?";
-$unlink_stmt = mysqli_prepare($connection, $unlink_sql);
-mysqli_stmt_bind_param($unlink_stmt, 'i', $userId);
-mysqli_stmt_execute($unlink_stmt);
-mysqli_stmt_close($unlink_stmt);
+// 3. ⚡ Atomic Operation: Transaction Start
+// Ensures unlinking and deletion are treated as a single unit of work.
+$connection->begin_transaction();
 
-// 4. 🚀 Atomic User Deletion
-$query = "DELETE FROM Users WHERE id = ?";
-$stmt = mysqli_prepare($connection, $query);
-
-if ($stmt) {
-    mysqli_stmt_bind_param($stmt, 'i', $userId);
+try {
+    // Stage A: Preserve Work History (Unlink Tickets)
+    // We set 'assigned_to' to NULL so existing tickets remain as "Unassigned" rather than disappearing.
+    $unlinkQuery = "UPDATE Tickets SET assigned_to = NULL WHERE assigned_to = ?";
+    $unlinkStmt = $connection->prepare($unlinkQuery);
     
-    if (mysqli_stmt_execute($stmt)) {
-        if (mysqli_stmt_affected_rows($stmt) > 0) {
-            echo json_encode([
-                'success' => true,
-                'message' => "User #$userId has been purged. Associated tickets are now unassigned."
-            ]);
-        } else {
-            echo json_encode(['error' => 'Registry Error: User not found or already deleted.']);
-        }
+    if (!$unlinkStmt) throw new Exception("Failed to prepare ticket unlinking statement.");
+    
+    $unlinkStmt->bind_param('i', $userId);
+    $unlinkStmt->execute();
+    $unlinkStmt->close();
+
+    // Stage B: Execute Identity Purge
+    $deleteQuery = "DELETE FROM Users WHERE id = ? LIMIT 1";
+    $deleteStmt = $connection->prepare($deleteQuery);
+    
+    if (!$deleteStmt) throw new Exception("Failed to prepare user deletion statement.");
+    
+    $deleteStmt->bind_param('i', $userId);
+    $deleteStmt->execute();
+
+    if ($deleteStmt->affected_rows > 0) {
+        // ✅ Success: Commit changes to database
+        $connection->commit();
+        echo json_encode([
+            'success' => true,
+            'message' => "Identity successfully purged. Associated tasks have been moved to the unassigned pool."
+        ]);
     } else {
-        http_response_code(500);
-        echo json_encode(['error' => 'Database Failure: ' . mysqli_error($connection)]);
+        throw new Exception("Identity not found or already removed from the registry.");
     }
-    mysqli_stmt_close($stmt);
-} else {
+    $deleteStmt->close();
+
+} catch (Exception $e) {
+    // ❌ Rollback: Undo any changes if an error occurred during the sequence
+    $connection->rollback();
     http_response_code(500);
-    echo json_encode(['error' => 'System Failure: Failed to prepare purge sequence.']);
+    echo json_encode([
+        'success' => false, 
+        'error' => 'Registry Error: ' . $e->getMessage()
+    ]);
 }
 
-mysqli_close($connection);
+$connection->close();
 ?>

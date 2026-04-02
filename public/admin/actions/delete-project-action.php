@@ -1,63 +1,102 @@
 <?php
+/**
+ * File: admin/actions/delete-project-action.php
+ * Purpose: Securely purges project nodes from the registry while maintaining data integrity.
+ */
+ob_start();
 session_start();
 header('Content-Type: application/json');
-include('../../../config/config.php');
 
-// 1. 🛡️ Admin Security Guard
+require_once('../../../config/config.php');
+
+// 1. 🛡️ Security Guard: Administrative Clearance
 if (!isset($_SESSION['role']) || strtolower($_SESSION['role']) !== 'admin') {
+    ob_clean();
     http_response_code(403);
-    echo json_encode(['error' => 'Security Violation: Admin authority required to purge projects.']);
+    echo json_encode(['success' => false, 'error' => 'Security Violation: Kernel level clearance required for purging.']);
     exit();
 }
 
-if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    $projectId = isset($_POST['project_id']) ? intval($_POST['project_id']) : 0;
-
-    if ($projectId === 0) {
-        echo json_encode(['error' => 'Invalid Request: No project identifier provided.']);
-        exit();
-    }
-
-    // 2. 🚦 Integrity Check: Are there tickets attached?
-    // This prevents accidental data corruption.
-    $check_query = "SELECT COUNT(*) as ticket_count FROM Tickets WHERE project_id = ?";
-    $check_stmt = mysqli_prepare($connection, $check_query);
-    mysqli_stmt_bind_param($check_stmt, 'i', $projectId);
-    mysqli_stmt_execute($check_stmt);
-    $result = mysqli_stmt_get_result($check_stmt);
-    $data = mysqli_fetch_assoc($result);
-
-    if ($data['ticket_count'] > 0) {
-        echo json_encode([
-            'error' => "Cannot delete project. There are still {$data['ticket_count']} tickets assigned to this workstream. Archive or reassign them first."
-        ]);
-        exit();
-    }
-
-    // 3. 🚀 Atomic Purge
-    $query = "DELETE FROM Projects WHERE id = ?";
-    $stmt = mysqli_prepare($connection, $query);
-    
-    if ($stmt) {
-        mysqli_stmt_bind_param($stmt, 'i', $projectId);
-        
-        if (mysqli_stmt_execute($stmt)) {
-            echo json_encode([
-                'success' => true, 
-                'message' => 'Project successfully purged from the registry.'
-            ]);
-        } else {
-            http_response_code(500);
-            echo json_encode(['error' => 'Execution Failure: ' . mysqli_error($connection)]);
-        }
-        mysqli_stmt_close($stmt);
-    } else {
-        http_response_code(500);
-        echo json_encode(['error' => 'System Failure: Unable to prepare delete statement.']);
-    }
-} else {
-    echo json_encode(['error' => 'Invalid Request Method.']);
+// 2. 🔍 Input Extraction & Protocol Check
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    ob_clean();
+    http_response_code(405);
+    echo json_encode(['success' => false, 'error' => 'Protocol Error: Invalid request method.']);
+    exit();
 }
 
-mysqli_close($connection);
-?>
+$projectId = isset($_POST['project_id']) ? (int)$_POST['project_id'] : 0;
+$adminId   = $_SESSION['user_id'] ?? $_SESSION['id'] ?? 0;
+
+if ($projectId <= 0) {
+    ob_clean();
+    echo json_encode(['success' => false, 'error' => 'Identifier Error: Valid Project ID required for destruction.']);
+    exit();
+}
+
+// 3. 🚀 Atomic Operation Logic
+try {
+    $connection->begin_transaction();
+
+    // A. 🚦 Integrity Check: Block deletion if orphaned tickets would be created
+    $checkQuery = "SELECT COUNT(*) as ticket_count FROM Tickets WHERE project_id = ? AND deleted_at IS NULL";
+    $checkStmt = $connection->prepare($checkQuery);
+    $checkStmt->bind_param('i', $projectId);
+    $checkStmt->execute();
+    $data = $checkStmt->get_result()->fetch_assoc();
+    $checkStmt->close();
+
+    if ($data['ticket_count'] > 0) {
+        throw new Exception("Operational Block: This project contains {$data['ticket_count']} active tickets. Reassign or purge them before removing the workstream.");
+    }
+
+    // B. Fetch Project Name for the Log (before it's gone)
+    $nameQuery = "SELECT name FROM Projects WHERE id = ?";
+    $nameStmt = $connection->prepare($nameQuery);
+    $nameStmt->bind_param('i', $projectId);
+    $nameStmt->execute();
+    $project = $nameStmt->get_result()->fetch_assoc();
+    $projectName = $project['name'] ?? 'Unknown Project';
+    $nameStmt->close();
+
+    // C. Primary Purge: The Project Record
+    $purgeStmt = $connection->prepare("DELETE FROM Projects WHERE id = ?");
+    $purgeStmt->bind_param("i", $projectId);
+    $purgeStmt->execute();
+
+    if ($purgeStmt->affected_rows === 0) {
+        throw new Exception("Target record not found in registry.");
+    }
+    $purgeStmt->close();
+
+    // D. 📝 Audit Trail: Log the destruction event
+    $logDesc = "Admin #$adminId executed permanent purge of Project Node #$projectId ($projectName).";
+    $auditLog = $connection->prepare("INSERT INTO activity_log (user_id, action_type, description, created_at) VALUES (?, 'PROJECT_PURGE', ?, NOW())");
+    $auditLog->bind_param("is", $adminId, $logDesc);
+    $auditLog->execute();
+    $auditLog->close();
+
+    // 🏆 Success: Commit Sequence
+    $connection->commit();
+
+    ob_clean();
+    echo json_encode([
+        'success' => true,
+        'message' => "Project #$projectId ($projectName) has been successfully synchronized and purged."
+    ]);
+
+} catch (Exception $e) {
+    // 🛑 Failure: Rollback
+    $connection->rollback();
+    
+    ob_clean();
+    echo json_encode([
+        'success' => false, 
+        'error'   => $e->getMessage()
+    ]);
+}
+
+// 4. Cleanup
+$connection->close();
+ob_end_flush();
+exit();

@@ -1,65 +1,91 @@
 <?php
+/**
+ * File: admin/actions/update-user-action.php
+ * Purpose: Synchronizes modified user metadata and permission tiers with the core registry.
+ */
 session_start();
 header('Content-Type: application/json');
-include('../../../config/config.php');
+require_once('../../../config/config.php');
 
-// 1. Strict Admin Guard
+// 1. 🛡️ Kernel Security Guard
 if (!isset($_SESSION['role']) || strtolower($_SESSION['role']) !== 'admin') {
     http_response_code(403);
-    echo json_encode(['success' => false, 'error' => 'System Violation: Unauthorized profile modification attempt.']);
+    echo json_encode([
+        'success' => false, 
+        'error' => 'Security Violation: Kernel-level admin clearance required.'
+    ]);
     exit();
 }
 
-// 2. Input Processing
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    // Mapping keys to match the 'name' attributes in your update form
-    $user_id = intval($_POST['target_user_id'] ?? 0);
-    $name    = trim($_POST['updateName'] ?? '');
-    $email   = trim($_POST['updateEmail'] ?? '');
-    $role    = strtolower(trim($_POST['updateRole'] ?? 'user'));
+// 2. 🚦 Guard: Enforce POST Protocol
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(405);
+    echo json_encode(['success' => false, 'error' => 'Invalid Access Method.']);
+    exit();
+}
 
-    // Safety Check: Prevent Admin Self-Demotion
-    if ($user_id === intval($_SESSION['user_id'] ?? 0) && $role !== 'admin') {
-        echo json_encode(['success' => false, 'error' => 'Security Lock: You cannot revoke your own Administrator status.']);
-        exit();
-    }
+// 3. 🔍 Identity & Data Extraction
+$userId = isset($_POST['target_user_id']) ? intval($_POST['target_user_id']) : 0;
+$name   = isset($_POST['updateName']) ? trim($_POST['updateName']) : '';
+$email  = isset($_POST['updateEmail']) ? trim($_POST['updateEmail']) : '';
+$role   = isset($_POST['updateRole']) ? strtolower(trim($_POST['updateRole'])) : 'user';
 
-    // 3. Basic Validation
-    if (empty($name) || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
-        echo json_encode(['success' => false, 'error' => 'Data Integrity Error: Name and valid Email are required.']);
-        exit();
-    }
+$currentAdminId = $_SESSION['user_id'] ?? 0;
 
-    // 4. Atomic Update
-    // Using $connection (the variable from your config)
-    $query = "UPDATE Users SET name = ?, email = ?, role = ? WHERE id = ?";
-    $stmt  = $connection->prepare($query);
+// 4. 🛑 Self-Preservation Logic
+// Prevents an admin from accidentally stripping their own 'admin' role.
+if ($userId === (int)$currentAdminId && $role !== 'admin') {
+    echo json_encode([
+        'success' => false, 
+        'error' => 'Security Lock: You cannot revoke your own Administrator status.'
+    ]);
+    exit();
+}
 
-    if ($stmt) {
-        $stmt->bind_param('sssi', $name, $email, $role, $user_id);
-        
-        if ($stmt->execute()) {
-            // Note: affected_rows is 0 if the admin hits save without changing any text
+// 5. 🚦 Validation Logic
+if (empty($name) || empty($email)) {
+    echo json_encode(['success' => false, 'error' => 'Data Integrity Error: Name and Email are mandatory.']);
+    exit();
+}
+
+if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+    echo json_encode(['success' => false, 'error' => 'Invalid Format: Provide a valid communication address.']);
+    exit();
+}
+
+// 6. 🚀 Atomic Registry Update
+$query = "UPDATE Users SET name = ?, email = ?, role = ? WHERE id = ? LIMIT 1";
+$stmt = $connection->prepare($query);
+
+if ($stmt) {
+    $stmt->bind_param("sssi", $name, $email, $role, $userId);
+    
+    if ($stmt->execute()) {
+        // execute() returns true even if 0 rows are changed (e.g., admin clicked save without edits)
+        echo json_encode([
+            'success' => true,
+            'message' => "Identity parameters for " . htmlspecialchars($name) . " successfully synchronized."
+        ]);
+    } else {
+        // Handle MySQL Error 1062: Duplicate entry for unique key 'email'
+        if ($connection->errno === 1062) {
             echo json_encode([
-                'success' => true, 
-                'message' => "Profile for " . htmlspecialchars($name) . " has been synchronized."
+                'success' => false, 
+                'error' => 'Conflict: This email is already bound to another identity.'
             ]);
         } else {
-            // Check for duplicate emails
-            if ($connection->errno === 1062) {
-                echo json_encode(['success' => false, 'error' => 'Conflict: This email is already registered to another user.']);
-            } else {
-                echo json_encode(['success' => false, 'error' => 'Database Sync Failed.']);
-            }
+            http_response_code(500);
+            echo json_encode([
+                'success' => false, 
+                'error' => 'Database Sync Failed: ' . $stmt->error
+            ]);
         }
-        $stmt->close();
-    } else {
-        http_response_code(500);
-        echo json_encode(['success' => false, 'error' => 'System Failure: Failed to prepare user update.']);
     }
+    $stmt->close();
 } else {
-    http_response_code(405);
-    echo json_encode(['success' => false, 'error' => 'Invalid request method.']);
+    http_response_code(500);
+    echo json_encode(['success' => false, 'error' => 'System Failure: Unable to prepare registry update.']);
 }
 
 $connection->close();
+?>

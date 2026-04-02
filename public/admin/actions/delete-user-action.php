@@ -1,64 +1,78 @@
 <?php
+/**
+ * File: admin/actions/delete-user-action.php
+ * Purpose: Secure removal of user identity and preservation of work history.
+ */
 session_start();
 header('Content-Type: application/json');
-include('../../../config/config.php');
+require_once('../../../config/config.php');
 
 // 1. 🛡️ Admin Security Guard
 if (!isset($_SESSION['role']) || strtolower($_SESSION['role']) !== 'admin') {
     http_response_code(403);
-    echo json_encode(['error' => 'Security Violation: Admin credentials required to modify user directory.']);
+    echo json_encode(['success' => false, 'error' => 'Security Violation: Kernel-level clearance required.']);
     exit();
 }
 
-if ($_SERVER['REQUEST_METHOD'] == 'POST') {
-    $userId = isset($_POST['user_id']) ? intval($_POST['user_id']) : 0;
+// 2. 🚦 Guard: Enforce POST Protocol
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(405);
+    echo json_encode(['success' => false, 'error' => 'Invalid Access Method.']);
+    exit();
+}
 
-    // Prevent Admins from deleting themselves!
-    if ($userId === intval($_SESSION['user_id'])) {
-        echo json_encode(['error' => 'Self-Destruct Blocked: You cannot delete your own administrative account.']);
-        exit();
-    }
+$userId = isset($_POST['user_id']) ? intval($_POST['user_id']) : 0;
+$currentAdminId = $_SESSION['user_id'] ?? 0;
 
-    if ($userId <= 0) {
-        echo json_encode(['error' => 'Invalid Request: No target user ID provided.']);
-        exit();
-    }
+// 3. 🛑 Self-Preservation Logic
+if ($userId === (int)$currentAdminId) {
+    echo json_encode(['success' => false, 'error' => 'Action Aborted: You cannot purge your own administrative identity.']);
+    exit();
+}
 
-    // 2. 🚦 Database Integrity: Unlink Tickets
-    // Instead of deleting tickets, we set 'assigned_to' to NULL so the work isn't lost.
+if ($userId <= 0) {
+    echo json_encode(['success' => false, 'error' => 'Invalid Identifier: No target specified.']);
+    exit();
+}
+
+// 4. ⚡ Atomic Operation: Transaction Start
+$connection->begin_transaction();
+
+try {
+    // Stage A: Preserve Work History (Unlink Tickets)
+    // We set 'assigned_to' to NULL so existing tickets remain in the system as "Unassigned"
     $unlinkQuery = "UPDATE Tickets SET assigned_to = NULL WHERE assigned_to = ?";
     $unlinkStmt = $connection->prepare($unlinkQuery);
     $unlinkStmt->bind_param('i', $userId);
     $unlinkStmt->execute();
     $unlinkStmt->close();
 
-    // 3. 🚀 Atomic User Purge
-    $query = "DELETE FROM Users WHERE id = ?";
-    $stmt = $connection->prepare($query);
-    
-    if ($stmt) {
-        $stmt->bind_param('i', $userId);
-        
-        if ($stmt->execute()) {
-            if ($stmt->affected_rows > 0) {
-                echo json_encode([
-                    'success' => true,
-                    'message' => 'User identity successfully purged. Associated tickets have been set to unassigned.'
-                ]);
-            } else {
-                echo json_encode(['error' => 'Target not found: User may have already been removed.']);
-            }
-        } else {
-            http_response_code(500);
-            echo json_encode(['error' => 'Execution Failure: ' . $stmt->error]);
-        }
-        $stmt->close();
+    // Stage B: Execute Identity Purge
+    $deleteQuery = "DELETE FROM Users WHERE id = ? LIMIT 1";
+    $deleteStmt = $connection->prepare($deleteQuery);
+    $deleteStmt->bind_param('i', $userId);
+    $deleteStmt->execute();
+
+    if ($deleteStmt->affected_rows > 0) {
+        // ✅ Commit changes to database
+        $connection->commit();
+        echo json_encode([
+            'success' => true,
+            'message' => 'Identity successfully purged from registry. Work history has been preserved and unassigned.'
+        ]);
     } else {
-        http_response_code(500);
-        echo json_encode(['error' => 'System Failure: Unable to prepare user deletion.']);
+        throw new Exception("Identity not found or already purged.");
     }
-} else {
-    echo json_encode(['error' => 'Invalid Request Method.']);
+    $deleteStmt->close();
+
+} catch (Exception $e) {
+    // ❌ Rollback on failure to maintain data integrity
+    $connection->rollback();
+    http_response_code(500);
+    echo json_encode([
+        'success' => false, 
+        'error' => 'Purge Protocol Failed: ' . $e->getMessage()
+    ]);
 }
 
 $connection->close();

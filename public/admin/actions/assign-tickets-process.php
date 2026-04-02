@@ -1,7 +1,7 @@
 <?php
 /**
- * File: actions/assign-tickets-process.php
- * Purpose: Handles ticket assignment and logs the activity.
+ * File: admin/actions/assign-tickets-process.php
+ * Purpose: Handles ticket assignment with strict validation and activity auditing.
  */
 ob_start(); 
 session_start();
@@ -9,39 +9,39 @@ header('Content-Type: application/json');
 
 require_once('../../../config/config.php');
 
-// 1. 🛡️ Security Guard
+// 1. 🛡️ Security Guard: Strict Admin Check
 if (!isset($_SESSION['role']) || strtolower($_SESSION['role']) !== 'admin') {
     ob_clean();
     http_response_code(403);
-    echo json_encode(['success' => false, 'error' => 'Unauthorized Access']);
+    echo json_encode(['success' => false, 'error' => 'Security Violation: Administrative clearance required.']);
     exit();
 }
 
-// 2. 🔍 Data Extraction
+// 2. 🔍 Data Extraction & Sanitization
 $ticketId   = isset($_POST['ticketId']) ? (int)$_POST['ticketId'] : 0;
 $assignedTo = isset($_POST['assignedTo']) ? (int)$_POST['assignedTo'] : 0;
-$adminId    = isset($_SESSION['user_id']) ? (int)$_SESSION['user_id'] : 0;
+$adminId    = $_SESSION['user_id'] ?? $_SESSION['id'] ?? 0;
 
-// 3. 🚦 Validation
+// 3. 🚦 Pre-Flight Validation
 if ($ticketId <= 0 || $assignedTo <= 0) {
     ob_clean();
-    echo json_encode(['success' => false, 'error' => 'Invalid Ticket or Developer selection.']);
+    echo json_encode(['success' => false, 'error' => 'Input Error: A valid Ticket and Developer must be selected.']);
     exit();
 }
 
 if ($adminId === 0) {
     ob_clean();
-    echo json_encode(['success' => false, 'error' => 'Session Error: Admin ID not found.']);
+    echo json_encode(['success' => false, 'error' => 'Authentication Error: Admin session node not found.']);
     exit();
 }
 
-// 4. 🚀 Execute Ticket Update
-// Update assigned_to, assigned_by, and set status to 'in-progress'
+// 4. 🚀 Execute Assignment Transaction
+// We only change status to 'in-progress' if it is currently 'open'
 $query = "UPDATE Tickets 
           SET assigned_to = ?, 
               assigned_by = ?, 
-              status = 'in-progress' 
-          WHERE id = ?";
+              status = CASE WHEN status = 'open' THEN 'in-progress' ELSE status END 
+          WHERE id = ? AND deleted_at IS NULL";
 
 $stmt = mysqli_prepare($connection, $query);
 
@@ -50,39 +50,36 @@ if ($stmt) {
     
     if (mysqli_stmt_execute($stmt)) {
         
-        // --- 📝 START ACTIVITY LOGGING ---
-        // Fetch names for a readable log entry
+        // --- 📝 ACTIVITY LOGGING (Clean Fetch) ---
         $dev_res = mysqli_query($connection, "SELECT name FROM Users WHERE id = $assignedTo LIMIT 1");
         $dev_row = mysqli_fetch_assoc($dev_res);
-        $dev_name = $dev_row['name'] ?? 'Unknown Dev';
+        $dev_name = $dev_row['name'] ?? 'Unknown Developer';
 
-        $log_desc = "Ticket #$ticketId was assigned to $dev_name by Admin (ID: $adminId)";
+        $log_desc = "Ticket #$ticketId deployed to $dev_name by Admin (ID: $adminId)";
         $log_query = "INSERT INTO activity_log (user_id, action_type, description) VALUES (?, 'TICKET_ASSIGNED', ?)";
         
-        $log_stmt = mysqli_prepare($connection, $log_query);
-        if ($log_stmt) {
+        if ($log_stmt = mysqli_prepare($connection, $log_query)) {
             mysqli_stmt_bind_param($log_stmt, 'is', $adminId, $log_desc);
             mysqli_stmt_execute($log_stmt);
             mysqli_stmt_close($log_stmt);
         }
-        // --- 📝 END ACTIVITY LOGGING ---
 
         ob_clean();
         echo json_encode([
             'success' => true,
-            'message' => "Ticket #$ticketId successfully deployed to $dev_name"
+            'message' => "Intel successfully deployed. Ticket #$ticketId is now with $dev_name."
         ]);
     } else {
         ob_clean();
-        echo json_encode(['success' => false, 'error' => 'Database update failed: ' . mysqli_error($connection)]);
+        echo json_encode(['success' => false, 'error' => 'Execution Failure: ' . mysqli_error($connection)]);
     }
     mysqli_stmt_close($stmt);
 } else {
     ob_clean();
-    echo json_encode(['success' => false, 'error' => 'SQL Preparation failed: ' . mysqli_error($connection)]);
+    echo json_encode(['success' => false, 'error' => 'Engine Failure: Unable to prepare assignment query.']);
 }
 
+// 5. Cleanup
 mysqli_close($connection);
 ob_end_flush();
 exit();
-?>

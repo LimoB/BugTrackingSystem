@@ -1,63 +1,99 @@
 <?php
+/**
+ * File: admin/actions/delete-ticket-action.php
+ * Purpose: Permanent purge of ticket records and associated meta-data.
+ */
+ob_start();
 session_start();
 header('Content-Type: application/json');
-include('../../../config/config.php');
 
-// 1. 🛡️ Admin Security Guard
+require_once('../../../config/config.php');
+
+// 1. 🛡️ Security Guard: Strict Admin Authorization
 if (!isset($_SESSION['role']) || strtolower($_SESSION['role']) !== 'admin') {
+    ob_clean();
     http_response_code(403);
-    echo json_encode(['error' => 'Security Violation: Admin clearance required to purge records.']);
+    echo json_encode(['success' => false, 'error' => 'Security Violation: Kernel level clearance required for purging.']);
     exit();
 }
 
-// 2. 🔍 Input Validation
+// 2. 🔍 Input Extraction & Protocol Check
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
-    echo json_encode(['error' => 'Protocol Error: Invalid request method.']);
+    ob_clean();
+    http_response_code(405);
+    echo json_encode(['success' => false, 'error' => 'Protocol Error: Invalid request method.']);
     exit();
 }
 
 $ticketId = isset($_POST['ticket_id']) ? (int)$_POST['ticket_id'] : 0;
+$adminId  = $_SESSION['user_id'] ?? $_SESSION['id'] ?? 0;
 
 if ($ticketId <= 0) {
-    echo json_encode(['error' => 'Identifier Error: A valid Ticket ID is required for this operation.']);
+    ob_clean();
+    echo json_encode(['success' => false, 'error' => 'Identifier Error: Valid Ticket ID required.']);
     exit();
 }
 
-// 3. 🧹 Cleanup Dependencies (Comments/Logs)
-// We delete associated comments first to maintain database integrity
-$cleanupQuery = "DELETE FROM Ticket_Comments WHERE ticket_id = ?";
-$cleanupStmt = $connection->prepare($cleanupQuery);
-if ($cleanupStmt) {
-    $cleanupStmt->bind_param("i", $ticketId);
-    $cleanupStmt->execute();
-    $cleanupStmt->close();
-}
+// 3. 🚀 Atomic Purge Sequence (Transaction Based)
+$connection->begin_transaction();
 
-// 4. 🚀 Atomic Ticket Purge
-$query = "DELETE FROM Tickets WHERE id = ?";
-$stmt = $connection->prepare($query);
+try {
+    // A. Cleanup Dependency: Comments
+    $cleanComments = $connection->prepare("DELETE FROM Ticket_Comments WHERE ticket_id = ?");
+    $cleanComments->bind_param("i", $ticketId);
+    $cleanComments->execute();
+    $cleanComments->close();
 
-if ($stmt) {
-    $stmt->bind_param("i", $ticketId);
-    
-    if ($stmt->execute()) {
-        if ($stmt->affected_rows > 0) {
-            echo json_encode([
-                'success' => true,
-                'message' => "Ticket #$ticketId and all associated data have been purged."
-            ]);
-        } else {
-            echo json_encode(['error' => 'Record not found: The ticket may have already been removed.']);
-        }
-    } else {
-        http_response_code(500);
-        echo json_encode(['error' => 'Execution Failure: ' . $stmt->error]);
+    // B. Cleanup Dependency: Activity Logs (Optional, depending on your architecture)
+    // If you want to keep history, skip this. If you want a total wipe, include it.
+    /*
+    $cleanLogs = $connection->prepare("DELETE FROM activity_log WHERE description LIKE ?");
+    $searchTerm = "%Ticket #$ticketId%";
+    $cleanLogs->bind_param("s", $searchTerm);
+    $cleanLogs->execute();
+    $cleanLogs->close();
+    */
+
+    // C. Primary Purge: The Ticket Record
+    $purgeTicket = $connection->prepare("DELETE FROM Tickets WHERE id = ?");
+    $purgeTicket->bind_param("i", $ticketId);
+    $purgeTicket->execute();
+
+    if ($purgeTicket->affected_rows === 0) {
+        throw new Exception("Target record not found or already purged.");
     }
-    $stmt->close();
-} else {
+    
+    $purgeTicket->close();
+
+    // D. Finalize Audit: Log the destruction event
+    $logDesc = "Admin #$adminId executed permanent purge of Ticket #$ticketId and associated assets.";
+    $auditLog = $connection->prepare("INSERT INTO activity_log (user_id, action_type, description, created_at) VALUES (?, 'TICKET_PURGE', ?, NOW())");
+    $auditLog->bind_param("is", $adminId, $logDesc);
+    $auditLog->execute();
+    $auditLog->close();
+
+    // 🏆 Success: Commit all changes
+    $connection->commit();
+
+    ob_clean();
+    echo json_encode([
+        'success' => true,
+        'message' => "Ticket #$ticketId and all dependencies have been successfully purged from the registry."
+    ]);
+
+} catch (Exception $e) {
+    // 🛑 Failure: Rollback database to state before deletion attempt
+    $connection->rollback();
+    
+    ob_clean();
     http_response_code(500);
-    echo json_encode(['error' => 'System Failure: Unable to prepare destruction sequence.']);
+    echo json_encode([
+        'success' => false,
+        'error' => 'Purge Sequence Aborted: ' . $e->getMessage()
+    ]);
 }
 
+// 4. Cleanup
 $connection->close();
-?>
+ob_end_flush();
+exit();
