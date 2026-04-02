@@ -2,20 +2,47 @@
 session_start();
 include('../../config/config.php');
 
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $ticket_id = mysqli_real_escape_string($connection, $_POST['ticket_id']);
-    $comment = mysqli_real_escape_string($connection, $_POST['comment']);
-    $user_id = $_SESSION['user_id'];
+// Set header for JSON response
+header('Content-Type: application/json');
 
-    // Insert the comment into the database
-    $query = "INSERT INTO Comments (ticket_id, user_id, comment) VALUES ('$ticket_id', '$user_id', '$comment')";
+// ✅ Security Check: Ensure user is logged in
+if (!isset($_SESSION['user_id'])) {
+    echo json_encode(['success' => false, 'message' => 'Session expired. Please log in again.']);
+    exit();
+}
+
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    // Validate inputs
+    $ticket_id = isset($_POST['ticket_id']) ? (int)$_POST['ticket_id'] : 0;
+    $comment = trim($_POST['comment'] ?? '');
+    $user_id = (int)$_SESSION['user_id'];
+
+    if ($ticket_id <= 0 || empty($comment)) {
+        echo json_encode(['success' => false, 'message' => 'Invalid comment data provided.']);
+        exit();
+    }
+
+    // ✅ SECURE PREPARED STATEMENT
+    $stmt = $connection->prepare("INSERT INTO Comments (ticket_id, user_id, comment) VALUES (?, ?, ?)");
+    $stmt->bind_param("iis", $ticket_id, $user_id, $comment);
     
-    if (mysqli_query($connection, $query)) {
+    if ($stmt->execute()) {
         // Return success response as JSON
-        echo json_encode(['success' => 'Comment added successfully!']);
+        echo json_encode([
+            'success' => true, 
+            'message' => 'Comment synced successfully!',
+            'data' => [
+                'user' => $_SESSION['name'],
+                'timestamp' => date('Y-m-d H:i:s')
+            ]
+        ]);
     } else {
         // Return error response as JSON
-        echo json_encode(['error' => 'Failed to add comment: ' . mysqli_error($connection)]);
+        echo json_encode(['success' => false, 'message' => 'Database failure: ' . $stmt->error]);
     }
+    
+    $stmt->close();
+} else {
+    echo json_encode(['success' => false, 'message' => 'Direct access protocol denied.']);
 }
 ?>
